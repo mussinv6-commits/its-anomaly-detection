@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>ITS 이상탐지 대시보드</title>
+<style>
+  body { font-family: sans-serif; margin: 24px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; }
+  th { background: #1f4e78; color: white; }
+  .flag { color: #a32d2d; font-weight: bold; }
+</style>
+</head>
+<body>
+  <h1>실시간 교통 이상탐지 현황</h1>
+  <table id="records-table">
+    <thead>
+      <tr><th>시간</th><th>차량 ID</th><th>이상 유형</th><th>속도(km/h)</th><th>번호판</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    async function loadRecords() {
+      const res = await fetch('/records');
+      const data = await res.json();
+      const tbody = document.querySelector('#records-table tbody');
+      tbody.innerHTML = '';
+      data.forEach(r => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+          <td>${r.detected_at}</td>
+          <td>${r.track_id}</td>
+          <td class="flag">${r.flags}</td>
+          <td>${r.speed_kmh.toFixed(1)}</td>
+          <td>${r.plate_number ?? '-'}</td>
+        `;
+        tbody.appendChild(row);
+      });
+    }
+    loadRecords();
+    setInterval(loadRecords, 5000); // 5초마다 갱신
+  </script>
+</body>
+</html>
