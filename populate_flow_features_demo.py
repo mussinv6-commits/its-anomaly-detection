@@ -35,13 +35,13 @@ def main():
         dx = random.gauss(5, 2)
         dy = random.gauss(0, 1)
 
+        # d.track_id가 실제 존재하는 트랙을 가리키므로 그대로 재사용 (FK 무결성 유지)
         save_flow_feature(
-            track_id=i,
+            track_id=d.track_id,
             speed_kmh=speed_kmh,
             dx=dx,
             dy=dy,
             bbox_area=bbox_area,
-            source=d.image_path,
             frame_idx=0,
         )
         saved += 1
