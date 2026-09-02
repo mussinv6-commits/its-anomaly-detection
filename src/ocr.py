@@ -24,9 +24,20 @@ class PlateOCR:
         한국 번호판 형식(숫자2~3 + 한글1 + 숫자4)에 맞는 부분만 추출해서 반환하고,
         형식에 안 맞으면 None을 반환한다 (오인식 필터링).
         """
+        result = self.read_debug(plate_image)
+        return result["parsed"]
+
+    def read_debug(self, plate_image) -> dict:
+        """
+        디버깅용: EasyOCR이 실제로 뭐라고 읽었는지(raw_text)와,
+        정규식 필터링을 거친 최종 결과(parsed)를 함께 반환한다.
+        원인 분석(왜 인식이 안 됐는지)이 필요할 때 사용한다.
+        """
         results = self.reader.readtext(plate_image)
         raw_text = "".join([res[1] for res in results])
-        return self._postprocess(raw_text)
+        confidences = [res[2] for res in results]  # 각 글자 조각의 인식 신뢰도
+        parsed = self._postprocess(raw_text)
+        return {"raw_text": raw_text, "confidences": confidences, "parsed": parsed}
 
     def _postprocess(self, text: str) -> str | None:
         # 1차: 숫자/한글 이외 문자(공백, 특수문자) 제거

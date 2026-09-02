@@ -20,7 +20,7 @@ sys.path.append(THIS_DIR)
 from fastapi import FastAPI, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 
-from db import init_db, get_recent_anomalies, get_recent_detections
+from db import init_db, get_recent_anomalies, get_recent_detections, get_ocr_stats, get_recent_ocr_attempts
 
 app = FastAPI(title="ITS 이상탐지 API")
 
@@ -86,6 +86,28 @@ def stats():
         counts[r.cls] = counts.get(r.cls, 0) + 1
     cls_name = {2: "승용차", 3: "오토바이", 5: "버스", 7: "트럭"}
     return {cls_name.get(cls, f"cls_{cls}"): count for cls, count in counts.items()}
+
+
+@app.get("/ocr-stats")
+def ocr_stats():
+    """번호판 인식 성공/실패 건수와 성공률을 반환한다. (대시보드 요약 카드용)"""
+    return get_ocr_stats()
+
+
+@app.get("/ocr-attempts")
+def ocr_attempts(limit: int = 20):
+    """최근 번호판 인식 시도 목록(성공/실패 여부 포함)을 반환한다."""
+    records = get_recent_ocr_attempts(limit)
+    return [
+        {
+            "id": r.id,
+            "raw_text": r.raw_text,
+            "parsed_plate": r.parsed_plate,
+            "success": r.success,
+            "attempted_at": r.attempted_at.isoformat(),
+        }
+        for r in records
+    ]
 
 
 @app.get("/health")

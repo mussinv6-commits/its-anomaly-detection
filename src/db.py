@@ -90,6 +90,21 @@ class FlowFeature(Base):
     track = relationship("Track", back_populates="flow_features")
 
 
+class OcrAttempt(Base):
+    """
+    번호판 OCR 시도마다 성공/실패를 기록한다 (인식률 통계용).
+    성공 여부와 무관하게 시도할 때마다 1건씩 쌓여서, "몇 번 시도해서 몇 번 성공했는지"를 계산할 수 있다.
+    """
+    __tablename__ = "ocr_attempts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    track_id = Column(Integer, ForeignKey("tracks.id"), nullable=True)
+    raw_text = Column(String, nullable=True)       # EasyOCR이 실제로 읽은 원문
+    parsed_plate = Column(String, nullable=True)   # 정규식 필터를 통과한 최종 번호판 (실패 시 NULL)
+    success = Column(String, nullable=False)       # "success" / "fail" (Boolean 대신 문자열로, 조회 편의성 위함)
+    attempted_at = Column(DateTime, default=datetime.now)
+
+
 def init_db():
     Base.metadata.create_all(engine)
 
@@ -204,6 +219,43 @@ def get_all_flow_features():
     return records
 
 
+def save_ocr_attempt(raw_text: str, parsed_plate: str, track_id: int = None):
+    """번호판 OCR 시도 결과를 기록한다. parsed_plate가 None이면 실패로 기록된다."""
+    session = SessionLocal()
+    record = OcrAttempt(
+        track_id=track_id,
+        raw_text=raw_text,
+        parsed_plate=parsed_plate,
+        success="success" if parsed_plate else "fail",
+    )
+    session.add(record)
+    session.commit()
+    session.close()
+
+
+def get_ocr_stats():
+    """번호판 인식 성공/실패 건수와 성공률을 계산해서 반환한다."""
+    session = SessionLocal()
+    total = session.query(OcrAttempt).count()
+    success = session.query(OcrAttempt).filter_by(success="success").count()
+    session.close()
+    fail = total - success
+    rate = (success / total * 100) if total > 0 else 0.0
+    return {"total": total, "success": success, "fail": fail, "success_rate": round(rate, 1)}
+
+
+def get_recent_ocr_attempts(limit: int = 50):
+    session = SessionLocal()
+    records = (
+        session.query(OcrAttempt)
+        .order_by(OcrAttempt.attempted_at.desc())
+        .limit(limit)
+        .all()
+    )
+    session.close()
+    return records
+
+
 if __name__ == "__main__":
     init_db()
-    print(f"DB 초기화 완료: {DB_HOST}:{DB_PORT}/{DB_NAME} (테이블: tracks, anomaly_records, detection_records, flow_features)")
+    print(f"DB 초기화 완료: {DB_HOST}:{DB_PORT}/{DB_NAME} (테이블: tracks, anomaly_records, detection_records, flow_features, ocr_attempts)")

@@ -15,6 +15,8 @@
   .stat-card { background: #f4f6f8; border: 1px solid #e3e7ee; border-radius: 8px; padding: 16px 24px; text-align: center; }
   .stat-card .num { font-size: 28px; font-weight: bold; color: #1f4e78; }
   .stat-card .label { font-size: 13px; color: #666; margin-top: 4px; }
+  .ok { color: #1a7a3c; font-weight: bold; }
+  .fail { color: #a32d2d; font-weight: bold; }
 </style>
 </head>
 <body>
@@ -24,10 +26,21 @@
   <h2>차종별 검출 통계</h2>
   <div class="stat-cards" id="stat-cards"></div>
 
+  <h2>번호판 인식률</h2>
+  <div class="stat-cards" id="ocr-stat-cards"></div>
+
   <h2>이상탐지 기록</h2>
   <table id="records-table">
     <thead>
       <tr><th>시간</th><th>차량 ID</th><th>이상 유형</th><th>속도(km/h)</th><th>번호판</th><th>소스</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <h2>번호판 인식 시도 내역</h2>
+  <table id="ocr-table">
+    <thead>
+      <tr><th>시간</th><th>인식 원문</th><th>결과 번호판</th><th>성공 여부</th></tr>
     </thead>
     <tbody></tbody>
   </table>
@@ -105,9 +118,47 @@
       });
     }
 
+    async function loadOcrStats() {
+      const res = await fetch('/ocr-stats');
+      const data = await res.json();
+      const container = document.querySelector('#ocr-stat-cards');
+      container.innerHTML = `
+        <div class="stat-card"><div class="num">${data.total}</div><div class="label">전체 시도</div></div>
+        <div class="stat-card"><div class="num ok">${data.success}</div><div class="label">성공</div></div>
+        <div class="stat-card"><div class="num fail">${data.fail}</div><div class="label">실패</div></div>
+        <div class="stat-card"><div class="num">${data.success_rate}%</div><div class="label">성공률</div></div>
+      `;
+    }
+
+    async function loadOcrAttempts() {
+      const res = await fetch('/ocr-attempts?limit=20');
+      const data = await res.json();
+      const tbody = document.querySelector('#ocr-table tbody');
+      tbody.innerHTML = '';
+      if (data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#999">아직 인식 시도 기록이 없습니다</td></tr>';
+        return;
+      }
+      data.forEach(r => {
+        const row = document.createElement('tr');
+        const successLabel = r.success === 'success'
+          ? '<span class="ok">성공</span>'
+          : '<span class="fail">실패</span>';
+        row.innerHTML = `
+          <td>${formatTime(r.attempted_at)}</td>
+          <td>${r.raw_text ?? '-'}</td>
+          <td>${r.parsed_plate ?? '-'}</td>
+          <td>${successLabel}</td>
+        `;
+        tbody.appendChild(row);
+      });
+    }
+
     function loadAll() {
       loadStats();
+      loadOcrStats();
       loadRecords();
+      loadOcrAttempts();
       loadDetections();
     }
 
