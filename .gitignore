@@ -9,3 +9,5 @@ data/*.db
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !models/.gitkeep
+*.pt 
+auth-db-blueprint.png 
