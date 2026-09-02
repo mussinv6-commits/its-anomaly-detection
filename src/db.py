@@ -10,7 +10,7 @@
 import os
 from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey
-from sqlalchemy.orm import declarative_base, sessionmaker, relationship
+from sqlalchemy.orm import declarative_base, sessionmaker, relationship, joinedload
 
 DB_USER = os.environ.get("ITS_DB_USER", "postgres")
 DB_PASSWORD = os.environ.get("ITS_DB_PASSWORD", "")
@@ -34,7 +34,7 @@ class Track(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     source = Column(String, nullable=False)     # 영상/카메라 소스 식별자
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=datetime.now)
 
     detections = relationship("DetectionRecord", back_populates="track", cascade="all, delete-orphan")
     flow_features = relationship("FlowFeature", back_populates="track", cascade="all, delete-orphan")
@@ -49,7 +49,7 @@ class AnomalyRecord(Base):
     flags = Column(String)          # "과속,역주행" 형태로 저장
     speed_kmh = Column(Float)
     plate_number = Column(String, nullable=True)
-    detected_at = Column(DateTime, default=datetime.utcnow)
+    detected_at = Column(DateTime, default=datetime.now)
 
     track = relationship("Track", back_populates="anomalies")
 
@@ -66,7 +66,7 @@ class DetectionRecord(Base):
     y1 = Column(Float)
     x2 = Column(Float)
     y2 = Column(Float)
-    detected_at = Column(DateTime, default=datetime.utcnow)
+    detected_at = Column(DateTime, default=datetime.now)
 
     track = relationship("Track", back_populates="detections")
 
@@ -85,7 +85,7 @@ class FlowFeature(Base):
     dy = Column(Float)              # y축 이동량 (픽셀)
     bbox_area = Column(Float)       # 검출 박스 크기 (차량 크기/거리 대리 지표)
     frame_idx = Column(Integer)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
 
     track = relationship("Track", back_populates="flow_features")
 
@@ -136,9 +136,14 @@ def save_anomaly(track_id: int, flags: list, speed_kmh: float, plate_number: str
 
 
 def get_recent_anomalies(limit: int = 50):
+    """
+    최근 이상탐지 기록을 조회한다. track 관계도 세션이 열려있는 동안 미리 함께 가져와서
+    (joinedload), 세션이 닫힌 뒤에 r.track.source에 접근해도 에러가 나지 않게 한다.
+    """
     session = SessionLocal()
     records = (
         session.query(AnomalyRecord)
+        .options(joinedload(AnomalyRecord.track))
         .order_by(AnomalyRecord.detected_at.desc())
         .limit(limit)
         .all()

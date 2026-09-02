@@ -7,7 +7,8 @@ from ultralytics import YOLO
 
 
 class VehicleDetector:
-    def __init__(self, model_path: str = "yolov8n.pt", conf_threshold: float = 0.4):
+    def __init__(self, model_path: str = "yolov8s.pt", conf_threshold: float = 0.4):
+        # yolov8n(nano) → yolov8s(small)로 교체: 속도는 조금 느려지지만 정확도가 눈에 띄게 개선됨
         # 초기엔 COCO 사전학습 모델(car, truck, bus 클래스 포함)로 시작 가능
         self.model = YOLO(model_path)
         self.conf_threshold = conf_threshold

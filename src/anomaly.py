@@ -17,20 +17,30 @@ class AnomalyConfig:
 
 
 class AnomalyDetector:
-    def __init__(self, config: AnomalyConfig = None, lane_direction: tuple = (1, 0)):
+    def __init__(self, config: AnomalyConfig = None, lane_directions=(1, 0)):
         self.config = config or AnomalyConfig()
-        self.lane_direction = lane_direction  # 정상 주행 방향 벡터 (x, y)
+        # 정상 주행 방향(들). 단일 벡터 (x,y) 하나를 줄 수도 있고,
+        # 양방향 도로 대응을 위해 [(x1,y1), (x2,y2), ...] 리스트를 줄 수도 있다.
+        if isinstance(lane_directions[0], (int, float)):
+            self.lane_directions = [lane_directions]
+        else:
+            self.lane_directions = list(lane_directions)
 
-    def compute_velocity(self, history: list, fps: float, meters_per_pixel: float):
-        """history의 마지막 두 지점으로 속도(km/h)와 이동 벡터를 계산한다."""
+    def compute_velocity(self, history: list, fps: float, meters_per_pixel: float, window: int = 5):
+        """
+        history의 최근 여러 프레임(window)을 평균 내서 속도(km/h)와 이동 벡터를 계산한다.
+        딱 2프레임만 보면 검출 박스가 살짝만 흔들려도 속도가 크게 튀기 때문에
+        (예: 한 프레임에 76km/h, 다음 프레임에 140km/h) 여러 프레임을 평균해서 노이즈를 줄인다.
+        """
         if len(history) < 2:
             return 0.0, (0.0, 0.0)
 
-        p1, p2 = history[-2]["bbox"], history[-1]["bbox"]
-        c1 = ((p1[0] + p1[2]) / 2, (p1[1] + p1[3]) / 2)
-        c2 = ((p2[0] + p2[2]) / 2, (p2[1] + p2[3]) / 2)
+        n = min(window, len(history) - 1)
+        p_start, p_end = history[-n - 1]["bbox"], history[-1]["bbox"]
+        c1 = ((p_start[0] + p_start[2]) / 2, (p_start[1] + p_start[3]) / 2)
+        c2 = ((p_end[0] + p_end[2]) / 2, (p_end[1] + p_end[3]) / 2)
 
-        dx, dy = c2[0] - c1[0], c2[1] - c1[1]
+        dx, dy = (c2[0] - c1[0]) / n, (c2[1] - c1[1]) / n  # 프레임당 평균 이동량
         dist_px = (dx ** 2 + dy ** 2) ** 0.5
         dist_m = dist_px * meters_per_pixel
         dt = 1 / fps
@@ -39,11 +49,25 @@ class AnomalyDetector:
         return speed_kmh, (dx, dy)
 
     def is_wrong_way(self, movement_vector: tuple) -> bool:
-        """이동 벡터가 정상 주행 방향과 반대인지 내적으로 판단한다."""
+        """
+        이동 벡터가 등록된 정상 주행 방향들(양방향 도로면 2개) 중 어느 것과도
+        비슷하지 않고, 확실히 반대 방향(120도 이상 벌어짐)일 때만 역주행으로 판단한다.
+        여러 정상 방향 중 "가장 가까운" 방향을 기준으로 비교한다.
+        """
         dx, dy = movement_vector
-        lx, ly = self.lane_direction
-        dot = dx * lx + dy * ly
-        return dot < 0
+        mag_move = (dx ** 2 + dy ** 2) ** 0.5
+        if mag_move < 1e-6:
+            return False  # 정지 상태에서는 방향 판단 자체가 무의미
+
+        best_cos_sim = -1.0  # 등록된 방향들 중 가장 비슷한(코사인 유사도가 가장 큰) 것을 채택
+        for lx, ly in self.lane_directions:
+            mag_lane = (lx ** 2 + ly ** 2) ** 0.5
+            if mag_lane < 1e-6:
+                continue
+            cos_sim = (dx * lx + dy * ly) / (mag_move * mag_lane)
+            best_cos_sim = max(best_cos_sim, cos_sim)
+
+        return best_cos_sim < -0.3
 
     def is_speeding(self, speed_kmh: float) -> bool:
         return speed_kmh > self.config.speed_limit
@@ -64,16 +88,24 @@ class AnomalyDetector:
         movement = max(xs) - min(xs) + max(ys) - min(ys)
         return movement < threshold_px
 
-    def evaluate(self, track: dict, fps: float, meters_per_pixel: float, prev_speed: float = 0.0):
-        """트랙 하나를 받아 이상탐지 결과 dict를 반환한다."""
-        speed, vector = self.compute_velocity(track["history"], fps, meters_per_pixel)
+    def evaluate(self, track: dict, fps: float, meters_per_pixel: float, prev_instant_speed: float = 0.0):
+        """
+        트랙 하나를 받아 이상탐지 결과 dict를 반환한다.
+
+        속도는 두 가지를 따로 계산한다:
+        - speed_kmh (스무딩): 여러 프레임 평균 — 리포팅, 과속·역주행 판단용 (노이즈에 안정적)
+        - instant_speed_kmh (순간): 마지막 2프레임만 — 급정거 판단용
+          (급정거는 "방금 급격히 느려졌는가"가 핵심이라, 평균을 쓰면 오히려 둔감해짐)
+        """
+        speed, vector = self.compute_velocity(track["history"], fps, meters_per_pixel, window=5)
+        instant_speed, _ = self.compute_velocity(track["history"], fps, meters_per_pixel, window=1)
         flags = []
 
         if self.is_speeding(speed):
             flags.append("과속")
         if self.is_wrong_way(vector):
             flags.append("역주행")
-        if self.is_sudden_deceleration(prev_speed, speed):
+        if self.is_sudden_deceleration(prev_instant_speed, instant_speed):
             flags.append("급정거")
         if self.is_illegally_stopped(track["history"], fps):
             flags.append("불법정차")
@@ -81,6 +113,7 @@ class AnomalyDetector:
         return {
             "track_id": track["track_id"],
             "speed_kmh": speed,
+            "instant_speed_kmh": instant_speed,
             "dx": vector[0],
             "dy": vector[1],
             "flags": flags,
