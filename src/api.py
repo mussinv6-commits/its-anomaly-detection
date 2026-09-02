@@ -11,21 +11,28 @@ src 폴더와 static 폴더 경로를 계산한다.
 import os
 import sys
 import shutil
+import random
 
 # 이 파일(api.py)이 있는 폴더(src)를 import 경로에 추가 → 어디서 실행해도 db.py를 찾을 수 있음
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(THIS_DIR)
 sys.path.append(THIS_DIR)
 
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 
-from db import init_db, get_recent_anomalies, get_recent_detections, get_ocr_stats, get_recent_ocr_attempts
+from db import (
+    init_db, get_recent_anomalies, get_recent_detections, get_ocr_stats,
+    get_recent_ocr_attempts, create_track, save_anomaly,
+)
 
 app = FastAPI(title="ITS 이상탐지 API")
 
 STATIC_DIR = os.path.join(PROJECT_ROOT, "static")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+# 업로드된 영상이 지금 처리 중인지 추적 (동시에 여러 개 처리 요청이 겹치는 걸 방지)
+processing_status = {"is_processing": False, "current_file": None}
 
 
 @app.on_event("startup")
@@ -33,14 +40,51 @@ def on_startup():
     init_db()
 
 
+def run_pipeline_in_background(video_path: str):
+    """백그라운드에서 실제 검출·추적·이상탐지 파이프라인을 실행한다."""
+    processing_status["is_processing"] = True
+    processing_status["current_file"] = os.path.basename(video_path)
+    try:
+        from main import run
+        run(video_path)
+    finally:
+        processing_status["is_processing"] = False
+        processing_status["current_file"] = None
+
+
 @app.post("/upload")
-async def upload_video(file: UploadFile = File(...)):
-    """PC에서 영상 파일을 업로드하면 저장 후 파이프라인 실행 대상으로 등록한다."""
+async def upload_video(file: UploadFile = File(...), background_tasks: BackgroundTasks = None):
+    """
+    PC에서 영상 파일을 업로드하면 저장하고, 백그라운드에서 바로 파이프라인을 실행한다.
+    업로드 응답은 즉시 오지만, 실제 처리(검출·추적·이상탐지)는 뒤에서 계속 진행되며
+    끝나는 대로 결과가 DB에 쌓여 대시보드에 순차적으로 나타난다.
+    """
     save_path = os.path.join(PROJECT_ROOT, "data", "raw", file.filename)
     with open(save_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    # TODO: main.py의 파이프라인을 백그라운드 태스크로 실행하도록 연결
-    return {"filename": file.filename, "status": "uploaded"}
+
+    background_tasks.add_task(run_pipeline_in_background, save_path)
+    return {"filename": file.filename, "status": "uploaded_and_processing"}
+
+
+@app.get("/processing-status")
+def get_processing_status():
+    """지금 백그라운드에서 영상 처리 중인지 확인한다. (대시보드에서 진행 표시용)"""
+    return processing_status
+
+
+@app.post("/demo/anomaly")
+def create_demo_anomaly():
+    """
+    데모/테스트용: 가상의 이상탐지 기록 1건을 즉시 DB에 저장한다.
+    POST 요청이 실제로 DB에 데이터를 쓴다는 것을 대시보드에서 바로 확인해볼 수 있게 하는 용도.
+    """
+    flag_options = [["과속"], ["역주행"], ["급정거"], ["불법정차"], ["과속", "급정거"]]
+    track_id = create_track(source="demo/manual_trigger")
+    flags = random.choice(flag_options)
+    speed = round(random.uniform(10, 100), 1)
+    save_anomaly(track_id=track_id, flags=flags, speed_kmh=speed)
+    return {"status": "created", "track_id": track_id, "flags": flags, "speed_kmh": speed}
 
 
 @app.get("/records")

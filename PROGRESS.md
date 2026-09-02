@@ -41,8 +41,8 @@
 
 | 순서 | 작업 | 파일 |
 |---|---|---|
-| 1 | `populate_flow_features_demo.py` 대신 실제 영상 기반 `flow_features`로 `train_isolation_forest.py` 재학습 | 6단계 |
-| 2 | 번호판 인식(`ocr.py`) 실사진 테스트 | 7단계 |
+| 1 | 영상 여러 개로 파이프라인 결과 비교 (안정성 검증) | 새 영상 확보 필요 |
+| 2 | `populate_flow_features_demo.py` 대신 실제 영상 기반 `flow_features`로 `train_isolation_forest.py` 재학습 | 6단계 |
 | 3 | 대시보드 결과 화면 캡처해서 발표자료/포트폴리오에 반영 | 9단계 |
 
 ---

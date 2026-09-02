@@ -17,11 +17,16 @@
   .stat-card .label { font-size: 13px; color: #666; margin-top: 4px; }
   .ok { color: #1a7a3c; font-weight: bold; }
   .fail { color: #a32d2d; font-weight: bold; }
+  #pulse { transition: opacity 0.3s ease; opacity: 0.2; }
 </style>
 </head>
 <body>
   <h1>실시간 교통 이상탐지 현황</h1>
-  <p style="color:#666">5초마다 자동 갱신됩니다</p>
+  <p style="color:#666">5초마다 자동 갱신됩니다 — <span id="last-updated">아직 갱신 전</span> <span id="pulse" style="color:#1a7a3c;">●</span></p>
+  <button id="demo-btn" style="background:#1f4e78;color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-size:14px;">
+    + 테스트 이상탐지 1건 추가 (POST)
+  </button>
+  <span id="demo-result" style="margin-left:12px;color:#666;"></span>
 
   <h2>차종별 검출 통계</h2>
   <div class="stat-cards" id="stat-cards"></div>
@@ -160,10 +165,31 @@
       loadRecords();
       loadOcrAttempts();
       loadDetections();
+
+      // 실제로 몇 시 몇 분 몇 초에 갱신됐는지 화면에 표시 (갱신이 눈에 보이도록)
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      document.querySelector('#last-updated').textContent =
+        `마지막 갱신: ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+
+      // 갱신될 때마다 점을 잠깐 깜빡여서 "지금 막 새로고침됨"을 시각적으로 보여줌
+      const pulse = document.querySelector('#pulse');
+      pulse.style.opacity = '1';
+      setTimeout(() => { pulse.style.opacity = '0.2'; }, 400);
     }
 
     loadAll();
     setInterval(loadAll, 5000); // 5초마다 갱신
+
+    // POST 요청으로 실제 DB에 데이터가 쓰이는 걸 버튼으로 바로 확인
+    document.querySelector('#demo-btn').addEventListener('click', async () => {
+      const resultSpan = document.querySelector('#demo-result');
+      resultSpan.textContent = '전송 중...';
+      const res = await fetch('/demo/anomaly', { method: 'POST' });
+      const data = await res.json();
+      resultSpan.textContent = `저장됨: track_id=${data.track_id}, ${data.flags.join(',')} (${data.speed_kmh}km/h) — 5초 안에 아래 표에 나타납니다`;
+      loadAll(); // 기다리지 않고 바로 한 번 갱신
+    });
   </script>
 </body>
 </html>
