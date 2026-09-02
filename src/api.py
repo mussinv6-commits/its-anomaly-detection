@@ -3,16 +3,29 @@ FastAPI 서버
 - PC 웹캠/영상 업로드를 받아 파이프라인 실행
 - 이상탐지 결과 조회 API 제공
 - 대시보드(static/dashboard.html)에 데이터 제공
+
+실행 위치와 무관하게 항상 동작하도록, 이 파일 자신의 위치를 기준으로
+src 폴더와 static 폴더 경로를 계산한다.
 """
+
+import os
+import sys
+import shutil
+
+# 이 파일(api.py)이 있는 폴더(src)를 import 경로에 추가 → 어디서 실행해도 db.py를 찾을 수 있음
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(THIS_DIR)
+sys.path.append(THIS_DIR)
 
 from fastapi import FastAPI, UploadFile, File
 from fastapi.staticfiles import StaticFiles
-import shutil
 
 from db import init_db, get_recent_anomalies, get_recent_detections
 
 app = FastAPI(title="ITS 이상탐지 API")
-app.mount("/static", StaticFiles(directory="static"), name="static")
+
+STATIC_DIR = os.path.join(PROJECT_ROOT, "static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.on_event("startup")
@@ -23,7 +36,7 @@ def on_startup():
 @app.post("/upload")
 async def upload_video(file: UploadFile = File(...)):
     """PC에서 영상 파일을 업로드하면 저장 후 파이프라인 실행 대상으로 등록한다."""
-    save_path = f"data/raw/{file.filename}"
+    save_path = os.path.join(PROJECT_ROOT, "data", "raw", file.filename)
     with open(save_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
     # TODO: main.py의 파이프라인을 백그라운드 태스크로 실행하도록 연결
