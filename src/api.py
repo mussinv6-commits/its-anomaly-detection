@@ -9,7 +9,7 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.staticfiles import StaticFiles
 import shutil
 
-from db import init_db, get_recent_anomalies
+from db import init_db, get_recent_anomalies, get_recent_detections
 
 app = FastAPI(title="ITS 이상탐지 API")
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -41,11 +41,38 @@ def list_records(limit: int = 50):
             "flags": r.flags,
             "speed_kmh": r.speed_kmh,
             "plate_number": r.plate_number,
-            "source": r.source,
+            "source": r.track.source if r.track else None,  # Track 관계를 통해 조회
             "detected_at": r.detected_at.isoformat(),
         }
         for r in records
     ]
+
+
+@app.get("/detections")
+def list_detections(limit: int = 100):
+    """최근 원본 검출 결과를 조회한다 (이상 여부와 무관한 전체 검출)."""
+    records = get_recent_detections(limit)
+    return [
+        {
+            "id": r.id,
+            "image_path": r.image_path,
+            "cls": r.cls,
+            "conf": r.conf,
+            "detected_at": r.detected_at.isoformat(),
+        }
+        for r in records
+    ]
+
+
+@app.get("/stats")
+def stats():
+    """차종(cls)별 검출 건수 통계. 대시보드 요약 카드용."""
+    records = get_recent_detections(limit=10000)
+    counts = {}
+    for r in records:
+        counts[r.cls] = counts.get(r.cls, 0) + 1
+    cls_name = {2: "승용차", 3: "오토바이", 5: "버스", 7: "트럭"}
+    return {cls_name.get(cls, f"cls_{cls}"): count for cls, count in counts.items()}
 
 
 @app.get("/health")
