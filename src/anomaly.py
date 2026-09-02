@@ -78,7 +78,13 @@ class AnomalyDetector:
         if self.is_illegally_stopped(track["history"], fps):
             flags.append("불법정차")
 
-        return {"track_id": track["track_id"], "speed_kmh": speed, "flags": flags}
+        return {
+            "track_id": track["track_id"],
+            "speed_kmh": speed,
+            "dx": vector[0],
+            "dy": vector[1],
+            "flags": flags,
+        }
 
 
 # TODO: 6단계에서 정상 주행 속도 분포를 수집해 평균/표준편차 기반 outlier 판단 추가

@@ -95,7 +95,8 @@ def init_db():
 
 
 def get_or_create_track(source: str) -> int:
-    """source(영상/이미지 경로)에 대한 Track을 찾거나 새로 만들고 id를 반환한다."""
+    """source(영상/이미지 경로)에 대한 Track을 찾거나 새로 만들고 id를 반환한다.
+    정지 이미지 처리(populate_db.py)처럼 소스당 트랙 1개면 충분한 경우에 쓴다."""
     session = SessionLocal()
     track = session.query(Track).filter_by(source=source).first()
     if track is None:
@@ -103,6 +104,19 @@ def get_or_create_track(source: str) -> int:
         session.add(track)
         session.commit()
         session.refresh(track)
+    track_id = track.id
+    session.close()
+    return track_id
+
+
+def create_track(source: str) -> int:
+    """항상 새 Track 행을 만들고 id를 반환한다.
+    영상(main.py) 처리처럼 같은 소스 안에 차량마다 별도 트랙이 필요한 경우에 쓴다."""
+    session = SessionLocal()
+    track = Track(source=source)
+    session.add(track)
+    session.commit()
+    session.refresh(track)
     track_id = track.id
     session.close()
     return track_id
