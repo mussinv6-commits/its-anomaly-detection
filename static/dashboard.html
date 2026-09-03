@@ -2,39 +2,116 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<title>ITS 이상탐지 대시보드</title>
+<title>ITS 이상탐지 관제 대시보드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
-  body { font-family: sans-serif; margin: 24px; }
-  table { border-collapse: collapse; width: 100%; margin-bottom: 32px; }
-  th, td { border: 1px solid #ccc; padding: 8px 12px; text-align: left; }
-  th { background: #1f4e78; color: white; }
-  .flag { color: #a32d2d; font-weight: bold; }
-  h1 { margin-bottom: 4px; }
-  h2 { margin-top: 32px; color: #1f4e78; }
-  .stat-cards { display: flex; gap: 16px; margin: 16px 0 32px; }
-  .stat-card { background: #f4f6f8; border: 1px solid #e3e7ee; border-radius: 8px; padding: 16px 24px; text-align: center; }
-  .stat-card .num { font-size: 28px; font-weight: bold; color: #1f4e78; }
-  .stat-card .label { font-size: 13px; color: #666; margin-top: 4px; }
-  .ok { color: #1a7a3c; font-weight: bold; }
-  .fail { color: #a32d2d; font-weight: bold; }
-  #pulse { transition: opacity 0.3s ease; opacity: 0.2; }
-  .chart-row { display: flex; gap: 24px; flex-wrap: wrap; margin: 16px 0 32px; }
-  .chart-box { background: #f4f6f8; border: 1px solid #e3e7ee; border-radius: 8px; padding: 16px; flex: 1; min-width: 280px; max-width: 420px; }
-  .chart-box h3 { margin: 0 0 12px; font-size: 14px; color: #444; }
-  .chart-box canvas { max-height: 260px; }
+  :root {
+    --bg: #14181c;
+    --panel: #1c2126;
+    --panel-2: #20262c;
+    --border: #2a3138;
+    --text: #e8eaed;
+    --text-muted: #8b95a1;
+    --normal: #2e9e5b;
+    --normal-bg: rgba(46,158,91,0.12);
+    --warn: #f2a93c;
+    --warn-bg: rgba(242,169,60,0.12);
+    --danger: #d93a3a;
+    --danger-bg: rgba(217,58,58,0.14);
+    --accent: #4fc3e0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 28px 32px 60px;
+  }
+  .mono { font-family: 'IBM Plex Mono', monospace; }
+
+  .topbar { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+  h1 { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -0.01em; }
+  .subline { color: var(--text-muted); font-size: 13px; }
+  .subline .mono { color: var(--accent); }
+  #pulse { transition: opacity 0.3s ease; opacity: 0.25; color: var(--accent); }
+
+  .hero {
+    border-radius: 10px;
+    padding: 22px 26px;
+    margin-bottom: 26px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    transition: background 0.4s ease, border-color 0.4s ease;
+  }
+  .hero.state-normal { background: var(--normal-bg); border-color: var(--normal); }
+  .hero.state-warn { background: var(--warn-bg); border-color: var(--warn); }
+  .hero.state-danger { background: var(--danger-bg); border-color: var(--danger); }
+  .hero-dot { width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0; }
+  .state-normal .hero-dot { background: var(--normal); box-shadow: 0 0 12px var(--normal); }
+  .state-warn .hero-dot { background: var(--warn); box-shadow: 0 0 12px var(--warn); }
+  .state-danger .hero-dot { background: var(--danger); box-shadow: 0 0 14px var(--danger); }
+  .hero-title { font-size: 22px; font-weight: 700; }
+  .hero-sub { color: var(--text-muted); font-size: 13px; margin-top: 2px; }
+
+  .btn-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 28px; }
+  button {
+    font-family: 'Inter', sans-serif;
+    background: var(--panel-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    padding: 10px 16px;
+    border-radius: 7px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    transition: border-color 0.15s ease;
+  }
+  button:hover { border-color: var(--accent); }
+  #demo-result { color: var(--text-muted); font-size: 13px; }
+
+  h2 { font-size: 13px; font-weight: 700; letter-spacing: 0.02em; color: var(--text-muted); text-transform: uppercase; margin: 34px 0 12px; }
+
+  .chart-row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .chart-box { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; flex: 1; min-width: 260px; max-width: 400px; }
+  .chart-box h3 { margin: 0 0 12px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+  .chart-box canvas { max-height: 220px; }
+
+  table { border-collapse: collapse; width: 100%; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  th, td { padding: 10px 14px; text-align: left; font-size: 13px; border-bottom: 1px solid var(--border); }
+  th { background: var(--panel-2); color: var(--text-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  tr:last-child td { border-bottom: none; }
+  td.mono, th.mono { font-family: 'IBM Plex Mono', monospace; }
+
+  .flag { color: var(--danger); font-weight: 700; }
+  .ok { color: var(--normal); font-weight: 700; }
+  .fail { color: var(--danger); font-weight: 700; }
 </style>
 </head>
 <body>
-  <h1>실시간 교통 이상탐지 현황</h1>
-  <p style="color:#666">5초마다 자동 갱신됩니다 — <span id="last-updated">아직 갱신 전</span> <span id="pulse" style="color:#1a7a3c;">●</span></p>
-  <button id="demo-btn" style="background:#1f4e78;color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-size:14px;">
-    + 테스트 이상탐지 1건 추가 (POST)
-  </button>
-  <button id="predict-btn" style="background:#8a6fa8;color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-size:14px;margin-left:8px;">
-    + 속도 예측 1건 실행 (POST)
-  </button>
-  <span id="demo-result" style="margin-left:12px;color:#666;"></span>
+  <div class="topbar">
+    <h1>실시간 교통 이상탐지 관제</h1>
+    <div class="subline">5초마다 자동 갱신 — <span id="last-updated" class="mono">대기 중</span> <span id="pulse">●</span></div>
+  </div>
+
+  <div class="hero state-normal" id="hero">
+    <div class="hero-dot"></div>
+    <div>
+      <div class="hero-title" id="hero-title">감시 중...</div>
+      <div class="hero-sub" id="hero-sub">최초 데이터 수신 대기</div>
+    </div>
+  </div>
+
+  <div class="btn-row">
+    <button id="demo-btn">+ 테스트 이상탐지 1건 추가 (POST)</button>
+    <button id="predict-btn">+ 속도 예측 1건 실행 (POST)</button>
+    <span id="demo-result"></span>
+  </div>
 
   <h2>통계 차트</h2>
   <div class="chart-row">
@@ -51,7 +128,7 @@
       <canvas id="chart-ocr"></canvas>
     </div>
     <div class="chart-box">
-      <h3>속도 예측 - 급정거 위험 비율</h3>
+      <h3>속도 예측 — 급정거 위험 비율</h3>
       <canvas id="chart-prediction"></canvas>
     </div>
   </div>
@@ -90,13 +167,16 @@
 
   <script>
     const clsNames = {2: "승용차", 3: "오토바이", 5: "버스", 7: "트럭"};
-    const CHART_COLORS = ["#1f4e78", "#3b6e8f", "#f2a93c", "#a32d2d", "#5a8f5a", "#8a6fa8"];
+    const CHART_COLORS = ["#4fc3e0", "#f2a93c", "#8a6fa8", "#2e9e5b", "#d93a3a", "#6b7684"];
 
-    // 차트 인스턴스를 보관해뒀다가, 갱신 시 destroy() 후 다시 그려서 메모리 누수/깜빡임 방지
+    Chart.defaults.color = "#8b95a1";
+    Chart.defaults.borderColor = "#2a3138";
+    Chart.defaults.font.family = "'Inter', sans-serif";
+
     let charts = { cls: null, anomaly: null, ocr: null, prediction: null };
+    let latestAnomaly = null;
 
     function formatTime(isoString) {
-      // "2026-09-02T01:34:33.356588" → "2026-09-02 01:34:33"
       const d = new Date(isoString);
       if (isNaN(d)) return isoString;
       const pad = (n) => String(n).padStart(2, '0');
@@ -109,14 +189,14 @@
       if (charts[chartKey]) charts[chartKey].destroy();
       charts[chartKey] = new Chart(ctx, {
         type: 'bar',
-        data: {
-          labels,
-          datasets: [{ data: values, backgroundColor: color || CHART_COLORS }],
-        },
+        data: { labels, datasets: [{ data: values, backgroundColor: color || CHART_COLORS, borderRadius: 4 }] },
         options: {
           responsive: true,
           plugins: { legend: { display: false } },
-          scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+          scales: {
+            y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: "#2a3138" } },
+            x: { grid: { display: false } },
+          },
         },
       });
     }
@@ -126,14 +206,8 @@
       if (charts[chartKey]) charts[chartKey].destroy();
       charts[chartKey] = new Chart(ctx, {
         type: 'doughnut',
-        data: {
-          labels,
-          datasets: [{ data: values, backgroundColor: ["#1a7a3c", "#a32d2d"] }],
-        },
-        options: {
-          responsive: true,
-          plugins: { legend: { position: 'bottom' } },
-        },
+        data: { labels, datasets: [{ data: values, backgroundColor: ["#2e9e5b", "#d93a3a"], borderColor: "#1c2126", borderWidth: 2 }] },
+        options: { responsive: true, plugins: { legend: { position: 'bottom' } } },
       });
     }
 
@@ -151,7 +225,7 @@
         renderBarChart('chart-anomaly', 'anomaly', ['(데이터 없음)'], [0]);
         return;
       }
-      renderBarChart('chart-anomaly', 'anomaly', labels, Object.values(data), "#a32d2d");
+      renderBarChart('chart-anomaly', 'anomaly', labels, Object.values(data), "#d93a3a");
     }
 
     async function loadOcrStats() {
@@ -172,7 +246,7 @@
       const tbody = document.querySelector('#prediction-table tbody');
       tbody.innerHTML = '';
       if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#999">아직 예측 시도 기록이 없습니다</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">아직 예측 시도 기록이 없습니다</td></tr>';
         return;
       }
       data.forEach(r => {
@@ -181,9 +255,9 @@
           ? '<span class="fail">급정거 위험</span>'
           : '<span class="ok">정상</span>';
         row.innerHTML = `
-          <td>${formatTime(r.predicted_at)}</td>
+          <td class="mono">${formatTime(r.predicted_at)}</td>
           <td>${r.track_id ?? '-'}</td>
-          <td>${r.predicted_speed_kmh?.toFixed(1) ?? '-'}</td>
+          <td class="mono">${r.predicted_speed_kmh?.toFixed(1) ?? '-'}</td>
           <td>${riskLabel}</td>
         `;
         tbody.appendChild(row);
@@ -193,24 +267,53 @@
     async function loadRecords() {
       const res = await fetch('/records');
       const data = await res.json();
+      latestAnomaly = data.length > 0 ? data[0] : null;
+      updateHero();
+
       const tbody = document.querySelector('#records-table tbody');
       tbody.innerHTML = '';
       if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#999">아직 이상탐지 기록이 없습니다</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-muted)">아직 이상탐지 기록이 없습니다</td></tr>';
         return;
       }
       data.forEach(r => {
         const row = document.createElement('tr');
         row.innerHTML = `
-          <td>${formatTime(r.detected_at)}</td>
+          <td class="mono">${formatTime(r.detected_at)}</td>
           <td>${r.track_id}</td>
           <td class="flag">${r.flags}</td>
-          <td>${r.speed_kmh.toFixed(1)}</td>
+          <td class="mono">${r.speed_kmh.toFixed(1)}</td>
           <td>${r.plate_number ?? '-'}</td>
           <td>${r.source ?? '-'}</td>
         `;
         tbody.appendChild(row);
       });
+    }
+
+    function updateHero() {
+      const hero = document.querySelector('#hero');
+      const title = document.querySelector('#hero-title');
+      const sub = document.querySelector('#hero-sub');
+
+      if (!latestAnomaly) {
+        hero.className = 'hero state-normal';
+        title.textContent = '이상 없음 — 정상 운행 중';
+        sub.textContent = '아직 감지된 이상탐지 기록이 없습니다';
+        return;
+      }
+
+      const elapsedSec = (Date.now() - new Date(latestAnomaly.detected_at).getTime()) / 1000;
+      const timeAgo = elapsedSec < 60 ? `${Math.round(elapsedSec)}초 전` : `${Math.round(elapsedSec / 60)}분 전`;
+
+      if (elapsedSec < 10) {
+        hero.className = 'hero state-danger';
+        title.textContent = `방금 감지: ${latestAnomaly.flags} (차량 ${latestAnomaly.track_id})`;
+        sub.textContent = `${latestAnomaly.speed_kmh.toFixed(1)}km/h — ${timeAgo}`;
+      } else {
+        hero.className = 'hero state-warn';
+        title.textContent = `최근 감지 이력: ${latestAnomaly.flags} (차량 ${latestAnomaly.track_id})`;
+        sub.textContent = `${latestAnomaly.speed_kmh.toFixed(1)}km/h — ${timeAgo}`;
+      }
     }
 
     async function loadDetections() {
@@ -221,10 +324,10 @@
       data.forEach(r => {
         const row = document.createElement('tr');
         row.innerHTML = `
-          <td>${formatTime(r.detected_at)}</td>
+          <td class="mono">${formatTime(r.detected_at)}</td>
           <td>${r.image_path}</td>
           <td>${clsNames[r.cls] ?? r.cls}</td>
-          <td>${(r.conf * 100).toFixed(1)}%</td>
+          <td class="mono">${(r.conf * 100).toFixed(1)}%</td>
         `;
         tbody.appendChild(row);
       });
@@ -236,7 +339,7 @@
       const tbody = document.querySelector('#ocr-table tbody');
       tbody.innerHTML = '';
       if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#999">아직 인식 시도 기록이 없습니다</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">아직 인식 시도 기록이 없습니다</td></tr>';
         return;
       }
       data.forEach(r => {
@@ -245,7 +348,7 @@
           ? '<span class="ok">성공</span>'
           : '<span class="fail">실패</span>';
         row.innerHTML = `
-          <td>${formatTime(r.attempted_at)}</td>
+          <td class="mono">${formatTime(r.attempted_at)}</td>
           <td>${r.raw_text ?? '-'}</td>
           <td>${r.parsed_plate ?? '-'}</td>
           <td>${successLabel}</td>
@@ -264,29 +367,26 @@
       loadPredictions();
       loadDetections();
 
-      // 실제로 몇 시 몇 분 몇 초에 갱신됐는지 화면에 표시 (갱신이 눈에 보이도록)
       const now = new Date();
       const pad = (n) => String(n).padStart(2, '0');
       document.querySelector('#last-updated').textContent =
-        `마지막 갱신: ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
-      // 갱신될 때마다 점을 잠깐 깜빡여서 "지금 막 새로고침됨"을 시각적으로 보여줌
       const pulse = document.querySelector('#pulse');
       pulse.style.opacity = '1';
-      setTimeout(() => { pulse.style.opacity = '0.2'; }, 400);
+      setTimeout(() => { pulse.style.opacity = '0.25'; }, 400);
     }
 
     loadAll();
-    setInterval(loadAll, 5000); // 5초마다 갱신
+    setInterval(loadAll, 5000);
 
-    // POST 요청으로 실제 DB에 데이터가 쓰이는 걸 버튼으로 바로 확인
     document.querySelector('#demo-btn').addEventListener('click', async () => {
       const resultSpan = document.querySelector('#demo-result');
       resultSpan.textContent = '전송 중...';
       const res = await fetch('/demo/anomaly', { method: 'POST' });
       const data = await res.json();
-      resultSpan.textContent = `저장됨: track_id=${data.track_id}, ${data.flags.join(',')} (${data.speed_kmh}km/h) — 5초 안에 아래 표에 나타납니다`;
-      loadAll(); // 기다리지 않고 바로 한 번 갱신
+      resultSpan.textContent = `저장됨: track_id=${data.track_id}, ${data.flags.join(',')} (${data.speed_kmh}km/h) — 5초 안에 반영됩니다`;
+      loadAll();
     });
 
     document.querySelector('#predict-btn').addEventListener('click', async () => {
@@ -299,10 +399,9 @@
         return;
       }
       resultSpan.textContent = `예측 완료: 입력속도=${data.recent_speeds.join(',')} → 예측=${data.predicted_speed}km/h `
-        + `(${data.risk ? '급정거 위험' : '정상'}) — 5초 안에 아래 표에 나타납니다`;
+        + `(${data.risk ? '급정거 위험' : '정상'}) — 5초 안에 반영됩니다`;
       loadAll();
     });
   </script>
 </body>
 </html>
-
