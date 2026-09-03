@@ -105,6 +105,21 @@ class OcrAttempt(Base):
     attempted_at = Column(DateTime, default=datetime.now)
 
 
+class SpeedPrediction(Base):
+    """
+    속도 예측(predict.py) 결과를 기록한다.
+    실제 속도와 예측 속도를 같이 저장해서, 나중에 "예측이 얼마나 잘 맞았는지" 검증할 수 있다.
+    """
+    __tablename__ = "speed_predictions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    track_id = Column(Integer, ForeignKey("tracks.id"), nullable=True)
+    actual_speed_kmh = Column(Float, nullable=True)     # 실제로 다음 프레임에 관측된 속도 (사후 비교용, 없을 수도 있음)
+    predicted_speed_kmh = Column(Float, nullable=False)
+    risk_flag = Column(String, nullable=False)          # "risk" / "normal"
+    predicted_at = Column(DateTime, default=datetime.now)
+
+
 def init_db():
     Base.metadata.create_all(engine)
 
@@ -323,6 +338,41 @@ def get_anomaly_type_stats():
     return counts
 
 
+def save_speed_prediction(predicted_speed_kmh: float, risk_flag: bool, track_id: int = None, actual_speed_kmh: float = None):
+    session = SessionLocal()
+    record = SpeedPrediction(
+        track_id=track_id,
+        actual_speed_kmh=actual_speed_kmh,
+        predicted_speed_kmh=predicted_speed_kmh,
+        risk_flag="risk" if risk_flag else "normal",
+    )
+    session.add(record)
+    session.commit()
+    session.close()
+
+
+def get_prediction_stats():
+    """예측 시도 중 '급정거 위험'으로 판정된 비율 등을 계산한다. (차트용)"""
+    session = SessionLocal()
+    total = session.query(SpeedPrediction).count()
+    risk = session.query(SpeedPrediction).filter_by(risk_flag="risk").count()
+    session.close()
+    normal = total - risk
+    return {"total": total, "risk": risk, "normal": normal}
+
+
+def get_recent_predictions(limit: int = 50):
+    session = SessionLocal()
+    records = (
+        session.query(SpeedPrediction)
+        .order_by(SpeedPrediction.predicted_at.desc())
+        .limit(limit)
+        .all()
+    )
+    session.close()
+    return records
+
+
 if __name__ == "__main__":
     init_db()
-    print(f"DB 초기화 완료: {DB_HOST}:{DB_PORT}/{DB_NAME} (테이블: tracks, anomaly_records, detection_records, flow_features, ocr_attempts)")
+    print(f"DB 초기화 완료: {DB_HOST}:{DB_PORT}/{DB_NAME} (테이블: tracks, anomaly_records, detection_records, flow_features, ocr_attempts, speed_predictions)")

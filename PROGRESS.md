@@ -20,6 +20,12 @@
 | 버그: `/records` API 500 에러 | DB 세션 종료 후 관계(Track) 데이터에 접근하려다 발생한 `DetachedInstanceError` → `joinedload`로 세션이 열려있을 때 미리 로드하도록 수정 |
 | 기능 추가 | `--speed-limit` 옵션으로 과속 임계값을 실행 시 조정 가능하게 (이상탐지 로직 검증 용도) |
 | 형상관리 | 오늘 변경사항 전체 + 테스트 영상(`1.mp4`) GitHub push 완료 |
+| 번호판 인식률 통계 | `ocr_attempts` 테이블 신설, 시도마다 성공/실패 기록, 대시보드에 성공률(%) 표시 |
+| 여러 영상 비교 도구 | `batch_compare.py` — 영상 여러 개를 일괄 처리하고 차량수·평균속도·이상유형별 건수를 표로 비교 |
+| 대시보드 실시간성 체감 개선 | "마지막 갱신 시각" + 깜빡이는 표시등 추가로 자동갱신(GET)이 실제로 동작 중임을 시각화 |
+| POST 기능 실제 구현 | `/demo/anomaly`(버튼으로 즉시 DB 저장 확인), `/upload`(영상 업로드 시 백그라운드로 실제 파이프라인 실행) |
+| 대시보드 차트화 | Chart.js 도입 — 차종별 막대, 이상유형별 막대, 번호판 인식률 도넛 3종 |
+| 간이 속도 예측 모델 | `flow_features` 23,841건으로 RandomForest 학습 — 최근 3프레임 속도로 다음 속도 예측 (MAE 5.56km/h), 급정거 조기경고용 `predict_sudden_drop_risk()` 구현 |
 
 ---
 
@@ -41,9 +47,9 @@
 
 | 순서 | 작업 | 파일 |
 |---|---|---|
-| 1 | 영상 여러 개로 파이프라인 결과 비교 (안정성 검증) | 새 영상 확보 필요 |
-| 2 | `populate_flow_features_demo.py` 대신 실제 영상 기반 `flow_features`로 `train_isolation_forest.py` 재학습 | 6단계 |
-| 3 | 대시보드 결과 화면 캡처해서 발표자료/포트폴리오에 반영 | 9단계 |
+| 1 | 영상 여러 개로 파이프라인 결과 비교 (`batch_compare.py` 사용) | 새 영상 확보 필요 |
+| 2 | 예측 모델을 main.py 파이프라인에 실제로 연결 (실시간 조기경고) | `src/predict.py` |
+| 3 | `train_isolation_forest.py`도 실제 flow_features로 재학습 | 6단계 |
 
 ---
 

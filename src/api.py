@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from db import (
     init_db, get_recent_anomalies, get_recent_detections, get_ocr_stats,
     get_recent_ocr_attempts, create_track, save_anomaly, get_anomaly_type_stats,
+    save_speed_prediction, get_prediction_stats, get_recent_predictions,
 )
 
 app = FastAPI(title="ITS 이상탐지 API")
@@ -87,6 +88,33 @@ def create_demo_anomaly():
     return {"status": "created", "track_id": track_id, "flags": flags, "speed_kmh": speed}
 
 
+@app.post("/demo/prediction")
+def create_demo_prediction():
+    """
+    데모/테스트용: 실제 학습된 speed_predictor.pkl로 가상의 속도 흐름 하나를 예측해서 저장한다.
+    학습된 모델이 없으면 안내 메시지를 반환한다.
+    """
+    from predict import SpeedPredictor
+
+    predictor = SpeedPredictor()
+    try:
+        predictor.load()
+    except FileNotFoundError:
+        return {"status": "no_model", "message": "먼저 train_speed_predictor.py로 모델을 학습해주세요."}
+
+    # 데모용 가상 속도 흐름 (실제로는 main.py가 실시간으로 이 값을 넘겨줌)
+    recent_speeds = [round(random.uniform(10, 100), 1) for _ in range(3)]
+    result = predictor.predict_sudden_drop_risk(recent_speeds)
+
+    track_id = create_track(source="demo/manual_trigger")
+    save_speed_prediction(
+        track_id=track_id,
+        predicted_speed_kmh=result["predicted_speed"],
+        risk_flag=result["risk"],
+    )
+    return {"status": "created", "recent_speeds": recent_speeds, **result}
+
+
 @app.get("/records")
 def list_records(limit: int = 50):
     """최근 이상탐지 기록을 조회한다. (대시보드에서 호출)"""
@@ -142,6 +170,28 @@ def ocr_stats():
 def anomaly_stats():
     """이상 유형(과속/역주행/급정거/불법정차)별 건수를 반환한다. (차트용)"""
     return get_anomaly_type_stats()
+
+
+@app.get("/prediction-stats")
+def prediction_stats():
+    """예측 시도 중 위험/정상 건수를 반환한다. (차트용)"""
+    return get_prediction_stats()
+
+
+@app.get("/predictions")
+def predictions(limit: int = 20):
+    """최근 속도 예측 시도 목록을 반환한다."""
+    records = get_recent_predictions(limit)
+    return [
+        {
+            "id": r.id,
+            "track_id": r.track_id,
+            "predicted_speed_kmh": r.predicted_speed_kmh,
+            "risk_flag": r.risk_flag,
+            "predicted_at": r.predicted_at.isoformat(),
+        }
+        for r in records
+    ]
 
 
 @app.get("/ocr-attempts")

@@ -31,6 +31,9 @@
   <button id="demo-btn" style="background:#1f4e78;color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-size:14px;">
     + 테스트 이상탐지 1건 추가 (POST)
   </button>
+  <button id="predict-btn" style="background:#8a6fa8;color:white;border:none;padding:10px 18px;border-radius:6px;cursor:pointer;font-size:14px;margin-left:8px;">
+    + 속도 예측 1건 실행 (POST)
+  </button>
   <span id="demo-result" style="margin-left:12px;color:#666;"></span>
 
   <h2>통계 차트</h2>
@@ -46,6 +49,10 @@
     <div class="chart-box">
       <h3>번호판 인식 성공률</h3>
       <canvas id="chart-ocr"></canvas>
+    </div>
+    <div class="chart-box">
+      <h3>속도 예측 - 급정거 위험 비율</h3>
+      <canvas id="chart-prediction"></canvas>
     </div>
   </div>
 
@@ -65,6 +72,14 @@
     <tbody></tbody>
   </table>
 
+  <h2>속도 예측 시도 내역</h2>
+  <table id="prediction-table">
+    <thead>
+      <tr><th>시간</th><th>차량 ID</th><th>예측 속도(km/h)</th><th>위험 여부</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
   <h2>최근 검출 결과 (원본)</h2>
   <table id="detections-table">
     <thead>
@@ -78,7 +93,7 @@
     const CHART_COLORS = ["#1f4e78", "#3b6e8f", "#f2a93c", "#a32d2d", "#5a8f5a", "#8a6fa8"];
 
     // 차트 인스턴스를 보관해뒀다가, 갱신 시 destroy() 후 다시 그려서 메모리 누수/깜빡임 방지
-    let charts = { cls: null, anomaly: null, ocr: null };
+    let charts = { cls: null, anomaly: null, ocr: null, prediction: null };
 
     function formatTime(isoString) {
       // "2026-09-02T01:34:33.356588" → "2026-09-02 01:34:33"
@@ -143,6 +158,36 @@
       const res = await fetch('/ocr-stats');
       const data = await res.json();
       renderDonutChart('chart-ocr', 'ocr', ['성공', '실패'], [data.success, data.fail]);
+    }
+
+    async function loadPredictionStats() {
+      const res = await fetch('/prediction-stats');
+      const data = await res.json();
+      renderDonutChart('chart-prediction', 'prediction', ['위험', '정상'], [data.risk, data.normal]);
+    }
+
+    async function loadPredictions() {
+      const res = await fetch('/predictions?limit=20');
+      const data = await res.json();
+      const tbody = document.querySelector('#prediction-table tbody');
+      tbody.innerHTML = '';
+      if (data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#999">아직 예측 시도 기록이 없습니다</td></tr>';
+        return;
+      }
+      data.forEach(r => {
+        const row = document.createElement('tr');
+        const riskLabel = r.risk_flag === 'risk'
+          ? '<span class="fail">급정거 위험</span>'
+          : '<span class="ok">정상</span>';
+        row.innerHTML = `
+          <td>${formatTime(r.predicted_at)}</td>
+          <td>${r.track_id ?? '-'}</td>
+          <td>${r.predicted_speed_kmh?.toFixed(1) ?? '-'}</td>
+          <td>${riskLabel}</td>
+        `;
+        tbody.appendChild(row);
+      });
     }
 
     async function loadRecords() {
@@ -213,8 +258,10 @@
       loadStats();
       loadAnomalyStats();
       loadOcrStats();
+      loadPredictionStats();
       loadRecords();
       loadOcrAttempts();
+      loadPredictions();
       loadDetections();
 
       // 실제로 몇 시 몇 분 몇 초에 갱신됐는지 화면에 표시 (갱신이 눈에 보이도록)
@@ -240,6 +287,20 @@
       const data = await res.json();
       resultSpan.textContent = `저장됨: track_id=${data.track_id}, ${data.flags.join(',')} (${data.speed_kmh}km/h) — 5초 안에 아래 표에 나타납니다`;
       loadAll(); // 기다리지 않고 바로 한 번 갱신
+    });
+
+    document.querySelector('#predict-btn').addEventListener('click', async () => {
+      const resultSpan = document.querySelector('#demo-result');
+      resultSpan.textContent = '예측 중...';
+      const res = await fetch('/demo/prediction', { method: 'POST' });
+      const data = await res.json();
+      if (data.status === 'no_model') {
+        resultSpan.textContent = data.message;
+        return;
+      }
+      resultSpan.textContent = `예측 완료: 입력속도=${data.recent_speeds.join(',')} → 예측=${data.predicted_speed}km/h `
+        + `(${data.risk ? '급정거 위험' : '정상'}) — 5초 안에 아래 표에 나타납니다`;
+      loadAll();
     });
   </script>
 </body>
