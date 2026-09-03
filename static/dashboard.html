@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>ITS 이상탐지 대시보드</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
 <style>
   body { font-family: sans-serif; margin: 24px; }
   table { border-collapse: collapse; width: 100%; margin-bottom: 32px; }
@@ -18,6 +19,10 @@
   .ok { color: #1a7a3c; font-weight: bold; }
   .fail { color: #a32d2d; font-weight: bold; }
   #pulse { transition: opacity 0.3s ease; opacity: 0.2; }
+  .chart-row { display: flex; gap: 24px; flex-wrap: wrap; margin: 16px 0 32px; }
+  .chart-box { background: #f4f6f8; border: 1px solid #e3e7ee; border-radius: 8px; padding: 16px; flex: 1; min-width: 280px; max-width: 420px; }
+  .chart-box h3 { margin: 0 0 12px; font-size: 14px; color: #444; }
+  .chart-box canvas { max-height: 260px; }
 </style>
 </head>
 <body>
@@ -28,11 +33,21 @@
   </button>
   <span id="demo-result" style="margin-left:12px;color:#666;"></span>
 
-  <h2>차종별 검출 통계</h2>
-  <div class="stat-cards" id="stat-cards"></div>
-
-  <h2>번호판 인식률</h2>
-  <div class="stat-cards" id="ocr-stat-cards"></div>
+  <h2>통계 차트</h2>
+  <div class="chart-row">
+    <div class="chart-box">
+      <h3>차종별 검출 건수</h3>
+      <canvas id="chart-cls"></canvas>
+    </div>
+    <div class="chart-box">
+      <h3>이상 유형별 건수</h3>
+      <canvas id="chart-anomaly"></canvas>
+    </div>
+    <div class="chart-box">
+      <h3>번호판 인식 성공률</h3>
+      <canvas id="chart-ocr"></canvas>
+    </div>
+  </div>
 
   <h2>이상탐지 기록</h2>
   <table id="records-table">
@@ -60,6 +75,10 @@
 
   <script>
     const clsNames = {2: "승용차", 3: "오토바이", 5: "버스", 7: "트럭"};
+    const CHART_COLORS = ["#1f4e78", "#3b6e8f", "#f2a93c", "#a32d2d", "#5a8f5a", "#8a6fa8"];
+
+    // 차트 인스턴스를 보관해뒀다가, 갱신 시 destroy() 후 다시 그려서 메모리 누수/깜빡임 방지
+    let charts = { cls: null, anomaly: null, ocr: null };
 
     function formatTime(isoString) {
       // "2026-09-02T01:34:33.356588" → "2026-09-02 01:34:33"
@@ -70,17 +89,60 @@
            + `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
     }
 
+    function renderBarChart(canvasId, chartKey, labels, values, color) {
+      const ctx = document.getElementById(canvasId).getContext('2d');
+      if (charts[chartKey]) charts[chartKey].destroy();
+      charts[chartKey] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels,
+          datasets: [{ data: values, backgroundColor: color || CHART_COLORS }],
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, ticks: { precision: 0 } } },
+        },
+      });
+    }
+
+    function renderDonutChart(canvasId, chartKey, labels, values) {
+      const ctx = document.getElementById(canvasId).getContext('2d');
+      if (charts[chartKey]) charts[chartKey].destroy();
+      charts[chartKey] = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels,
+          datasets: [{ data: values, backgroundColor: ["#1a7a3c", "#a32d2d"] }],
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { position: 'bottom' } },
+        },
+      });
+    }
+
     async function loadStats() {
       const res = await fetch('/stats');
       const data = await res.json();
-      const container = document.querySelector('#stat-cards');
-      container.innerHTML = '';
-      Object.entries(data).forEach(([name, count]) => {
-        const card = document.createElement('div');
-        card.className = 'stat-card';
-        card.innerHTML = `<div class="num">${count}</div><div class="label">${name}</div>`;
-        container.appendChild(card);
-      });
+      renderBarChart('chart-cls', 'cls', Object.keys(data), Object.values(data));
+    }
+
+    async function loadAnomalyStats() {
+      const res = await fetch('/anomaly-stats');
+      const data = await res.json();
+      const labels = Object.keys(data);
+      if (labels.length === 0) {
+        renderBarChart('chart-anomaly', 'anomaly', ['(데이터 없음)'], [0]);
+        return;
+      }
+      renderBarChart('chart-anomaly', 'anomaly', labels, Object.values(data), "#a32d2d");
+    }
+
+    async function loadOcrStats() {
+      const res = await fetch('/ocr-stats');
+      const data = await res.json();
+      renderDonutChart('chart-ocr', 'ocr', ['성공', '실패'], [data.success, data.fail]);
     }
 
     async function loadRecords() {
@@ -123,18 +185,6 @@
       });
     }
 
-    async function loadOcrStats() {
-      const res = await fetch('/ocr-stats');
-      const data = await res.json();
-      const container = document.querySelector('#ocr-stat-cards');
-      container.innerHTML = `
-        <div class="stat-card"><div class="num">${data.total}</div><div class="label">전체 시도</div></div>
-        <div class="stat-card"><div class="num ok">${data.success}</div><div class="label">성공</div></div>
-        <div class="stat-card"><div class="num fail">${data.fail}</div><div class="label">실패</div></div>
-        <div class="stat-card"><div class="num">${data.success_rate}%</div><div class="label">성공률</div></div>
-      `;
-    }
-
     async function loadOcrAttempts() {
       const res = await fetch('/ocr-attempts?limit=20');
       const data = await res.json();
@@ -161,6 +211,7 @@
 
     function loadAll() {
       loadStats();
+      loadAnomalyStats();
       loadOcrStats();
       loadRecords();
       loadOcrAttempts();

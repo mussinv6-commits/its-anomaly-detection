@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 
 from db import (
     init_db, get_recent_anomalies, get_recent_detections, get_ocr_stats,
-    get_recent_ocr_attempts, create_track, save_anomaly,
+    get_recent_ocr_attempts, create_track, save_anomaly, get_anomaly_type_stats,
 )
 
 app = FastAPI(title="ITS 이상탐지 API")
@@ -136,6 +136,12 @@ def stats():
 def ocr_stats():
     """번호판 인식 성공/실패 건수와 성공률을 반환한다. (대시보드 요약 카드용)"""
     return get_ocr_stats()
+
+
+@app.get("/anomaly-stats")
+def anomaly_stats():
+    """이상 유형(과속/역주행/급정거/불법정차)별 건수를 반환한다. (차트용)"""
+    return get_anomaly_type_stats()
 
 
 @app.get("/ocr-attempts")

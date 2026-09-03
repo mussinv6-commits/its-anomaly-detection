@@ -219,6 +219,60 @@ def get_all_flow_features():
     return records
 
 
+def get_video_summary(source: str) -> dict:
+    """
+    특정 영상(source)에 대한 처리 결과를 요약한다.
+    여러 영상을 돌린 뒤 서로 비교할 때 사용한다 (batch_compare.py).
+    """
+    session = SessionLocal()
+
+    tracks = session.query(Track).filter_by(source=source).all()
+    track_ids = [t.id for t in tracks]
+    vehicle_count = len(track_ids)
+
+    if not track_ids:
+        session.close()
+        return {
+            "source": source, "vehicle_count": 0, "avg_speed_kmh": 0.0,
+            "anomaly_counts": {}, "total_anomalies": 0,
+        }
+
+    anomalies = (
+        session.query(AnomalyRecord)
+        .filter(AnomalyRecord.track_id.in_(track_ids))
+        .all()
+    )
+    flows = (
+        session.query(FlowFeature)
+        .filter(FlowFeature.track_id.in_(track_ids))
+        .all()
+    )
+    session.close()
+
+    avg_speed = sum(f.speed_kmh for f in flows) / len(flows) if flows else 0.0
+
+    anomaly_counts = {}
+    for a in anomalies:
+        for flag in a.flags.split(","):
+            anomaly_counts[flag] = anomaly_counts.get(flag, 0) + 1
+
+    return {
+        "source": source,
+        "vehicle_count": vehicle_count,
+        "avg_speed_kmh": round(avg_speed, 1),
+        "anomaly_counts": anomaly_counts,
+        "total_anomalies": len(anomalies),
+    }
+
+
+def get_all_video_sources() -> list:
+    """지금까지 처리된 모든 영상/이미지 소스 목록(중복 제거)을 반환한다."""
+    session = SessionLocal()
+    rows = session.query(Track.source).distinct().all()
+    session.close()
+    return [r[0] for r in rows]
+
+
 def save_ocr_attempt(raw_text: str, parsed_plate: str, track_id: int = None):
     """번호판 OCR 시도 결과를 기록한다. parsed_plate가 None이면 실패로 기록된다."""
     session = SessionLocal()
@@ -254,6 +308,19 @@ def get_recent_ocr_attempts(limit: int = 50):
     )
     session.close()
     return records
+
+
+def get_anomaly_type_stats():
+    """이상 유형(과속/역주행/급정거/불법정차)별 건수를 집계한다. (차트용)"""
+    session = SessionLocal()
+    records = session.query(AnomalyRecord.flags).all()
+    session.close()
+
+    counts = {}
+    for (flags_str,) in records:
+        for flag in flags_str.split(","):
+            counts[flag] = counts.get(flag, 0) + 1
+    return counts
 
 
 if __name__ == "__main__":
