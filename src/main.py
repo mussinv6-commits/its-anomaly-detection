@@ -20,7 +20,11 @@ from anomaly import AnomalyDetector, AnomalyConfig
 from ocr import PlateOCR
 from db import init_db, create_track, save_flow_feature, save_anomaly, save_speed_prediction, save_ocr_attempt
 
-PLATE_DETECTOR_PATH = "models/plate_detector.pt"
+# 이 파일(main.py) 위치를 기준으로 절대경로를 계산 — src 안에서 실행하든 최상위에서 실행하든
+# 항상 정확하게 models/plate_detector.pt를 찾도록 함
+THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(THIS_DIR)
+PLATE_DETECTOR_PATH = os.path.join(PROJECT_ROOT, "models", "plate_detector.pt")
 
 
 def calibrate_lane_directions(video_path: str, detector, sample_frames: int = 90):
@@ -92,7 +96,11 @@ def calibrate_lane_directions(video_path: str, detector, sample_frames: int = 90
     return lane_directions
 
 
-def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60.0, enable_ocr: bool = True):
+def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60.0, enable_ocr: bool = True, save_ocr_debug_images: bool = False):
+    debug_dir = os.path.join(PROJECT_ROOT, "debug_output")
+    if save_ocr_debug_images:
+        os.makedirs(debug_dir, exist_ok=True)
+
     detector = VehicleDetector()
     tracker = SimpleTracker()
     ocr = PlateOCR() if enable_ocr else None
@@ -173,11 +181,19 @@ def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60
 
                     ocr_target = None
                     if vehicle_crop_full.size > 0:
+                        if save_ocr_debug_images:
+                            # 번호판 검출 자체가 실패해도, 원본 차량 crop은 항상 저장해서
+                            # "차량 crop이 제대로 잘렸는지"부터 눈으로 확인할 수 있게 함
+                            debug_path = os.path.join(debug_dir, f"vehicle_frame{frame_idx}_track{local_id}.jpg")
+                            cv2.imwrite(debug_path, vehicle_crop_full)
+
                         if plate_detector is not None:
                             # 학습된 번호판 검출 모델로 정확한 위치를 찾아서 그 부분만 크롭
                             plate_box = plate_detector.detect(vehicle_crop_full)
                             if plate_box:
                                 ocr_target = plate_detector.crop_plate(vehicle_crop_full, plate_box)
+                            elif save_ocr_debug_images:
+                                print(f"           └ 번호판 검출 실패 (모델이 위치를 못 찾음) — 차량 crop만 저장됨")
                         else:
                             # 모델이 없으면, 번호판이 보통 있는 차량 하단 40%로 추정해서 크롭
                             height = y2 - y1
@@ -185,6 +201,9 @@ def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60
                             ocr_target = vehicle_crop_full[plate_region_y1:, :]
 
                     if ocr_target is not None and ocr_target.size > 0:
+                        if save_ocr_debug_images:
+                            debug_path = os.path.join(debug_dir, f"plate_frame{frame_idx}_track{local_id}.jpg")
+                            cv2.imwrite(debug_path, ocr_target)
                         debug = ocr.read_debug(ocr_target)
                         plate_number = debug["parsed"]
                         save_ocr_attempt(
@@ -232,11 +251,17 @@ if __name__ == "__main__":
         "--no-ocr", action="store_true",
         help="번호판 인식을 끄고 실행 (속도 향상, OCR 검증이 필요 없을 때)",
     )
+    parser.add_argument(
+        "--save-ocr-debug", action="store_true",
+        help="OCR에 실제로 넘겨진 크롭 이미지를 파일로 저장 (ocr_debug_frame*.jpg) — "
+             "번호판 인식이 계속 실패할 때 원인 파악용 (위치가 틀렸는지 화질 문제인지 확인)",
+    )
     args = parser.parse_args()
     run(
         args.video,
         meters_per_pixel=args.meters_per_pixel,
         speed_limit=args.speed_limit,
         enable_ocr=not args.no_ocr,
+        save_ocr_debug_images=args.save_ocr_debug,
     )
 

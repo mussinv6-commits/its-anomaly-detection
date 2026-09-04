@@ -12,9 +12,9 @@ from ultralytics import YOLO
 
 
 class PlateDetector:
-    def __init__(self, model_path: str = "models/plate_detector.pt", conf_threshold: float = 0.3):
+    def __init__(self, model_path: str = "models/plate_detector.pt", conf_threshold: float = 0.1):
         self.model = YOLO(model_path)
-        self.conf_threshold = conf_threshold
+        self.conf_threshold = conf_threshold  # 기본값을 0.3→0.1로 낮춤 (아무것도 못 찾는 문제 진단을 위해 임시로 완화)
 
     def detect(self, vehicle_crop):
         """
