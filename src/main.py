@@ -11,12 +11,16 @@
 """
 
 import argparse
+import os
 import cv2
 
 from detect import VehicleDetector
 from tracker import SimpleTracker
 from anomaly import AnomalyDetector, AnomalyConfig
-from db import init_db, create_track, save_flow_feature, save_anomaly
+from ocr import PlateOCR
+from db import init_db, create_track, save_flow_feature, save_anomaly, save_speed_prediction, save_ocr_attempt
+
+PLATE_DETECTOR_PATH = "models/plate_detector.pt"
 
 
 def calibrate_lane_directions(video_path: str, detector, sample_frames: int = 90):
@@ -88,9 +92,21 @@ def calibrate_lane_directions(video_path: str, detector, sample_frames: int = 90
     return lane_directions
 
 
-def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60.0):
+def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60.0, enable_ocr: bool = True):
     detector = VehicleDetector()
     tracker = SimpleTracker()
+    ocr = PlateOCR() if enable_ocr else None
+
+    # 번호판 전용 검출 모델이 학습되어 있으면 그걸 쓰고(정확), 없으면 기존 방식(하단 40% 추정)으로 대체
+    plate_detector = None
+    if enable_ocr and os.path.exists(PLATE_DETECTOR_PATH):
+        from plate_detect import PlateDetector
+        plate_detector = PlateDetector(PLATE_DETECTOR_PATH)
+        print(f"번호판 전용 검출 모델 사용: {PLATE_DETECTOR_PATH}")
+    elif enable_ocr:
+        print("번호판 전용 검출 모델이 없어 차량 하단 40% 추정 방식을 사용합니다. "
+              "(train_plate_detector.py로 학습하면 정확도 개선 가능)")
+
     init_db()
 
     # 1차 통과: 정상 주행 방향(들)을 먼저 파악해 캘리브레이션 (편도/양방향 자동 판단)
@@ -124,8 +140,9 @@ def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60
                 local_to_db_track[local_id] = create_track(source=video_path)
             db_track_id = local_to_db_track[local_id]
 
+            prev_instant = prev_speeds.get(local_id, 0.0)
             result = anomaly_detector.evaluate(
-                track, fps, meters_per_pixel, prev_speeds.get(local_id, 0.0)
+                track, fps, meters_per_pixel, prev_instant
             )
             prev_speeds[local_id] = result["instant_speed_kmh"]  # 급정거 판단은 순간속도 기준으로 이어감
             bbox = track["bbox"]
@@ -143,10 +160,46 @@ def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60
 
             if result["flags"]:
                 print(f"[frame {frame_idx}] track {local_id}: {result['flags']} ({result['speed_kmh']:.1f}km/h)")
+                if "급정거" in result["flags"]:
+                    print(f"           └ 급정거 판정 근거: 순간속도 {prev_instant:.1f}km/h → {result['instant_speed_kmh']:.1f}km/h")
+
+                plate_number = None
+                if ocr is not None:
+                    # 이상탐지된 차량만 번호판 인식 시도 (전체 차량마다 시도하면 너무 느리고,
+                    # 실무적으로도 "단속 대상만 번호판 확인"이 현실적인 방식)
+                    x1, y1, x2, y2 = [int(v) for v in bbox]
+                    x1, y1 = max(0, x1), max(0, y1)
+                    vehicle_crop_full = frame[y1:y2, x1:x2]
+
+                    ocr_target = None
+                    if vehicle_crop_full.size > 0:
+                        if plate_detector is not None:
+                            # 학습된 번호판 검출 모델로 정확한 위치를 찾아서 그 부분만 크롭
+                            plate_box = plate_detector.detect(vehicle_crop_full)
+                            if plate_box:
+                                ocr_target = plate_detector.crop_plate(vehicle_crop_full, plate_box)
+                        else:
+                            # 모델이 없으면, 번호판이 보통 있는 차량 하단 40%로 추정해서 크롭
+                            height = y2 - y1
+                            plate_region_y1 = int(height * 0.6)
+                            ocr_target = vehicle_crop_full[plate_region_y1:, :]
+
+                    if ocr_target is not None and ocr_target.size > 0:
+                        debug = ocr.read_debug(ocr_target)
+                        plate_number = debug["parsed"]
+                        save_ocr_attempt(
+                            raw_text=debug["raw_text"],
+                            parsed_plate=plate_number,
+                            track_id=db_track_id,
+                        )
+                        if plate_number:
+                            print(f"           └ 번호판 인식: {plate_number}")
+
                 save_anomaly(
                     track_id=db_track_id,
                     flags=result["flags"],
                     speed_kmh=result["speed_kmh"],
+                    plate_number=plate_number,
                 )
 
         frame_idx += 1
@@ -170,6 +223,20 @@ if __name__ == "__main__":
         help="과속 판단 기준(km/h). 이상탐지가 전혀 안 잡힐 때 낮춰서(예: 10) 로직 자체가 "
              "작동하는지 검증하는 용도로도 쓸 수 있음",
     )
+    parser.add_argument(
+        "--meters-per-pixel", type=float, default=0.05,
+        help="픽셀당 실제 거리(미터). 평균속도가 비현실적으로 높게 나오면 이 값을 낮춰서 "
+             "카메라 축척을 보정한다 (기본값 0.05는 임의값 — 카메라마다 다름)",
+    )
+    parser.add_argument(
+        "--no-ocr", action="store_true",
+        help="번호판 인식을 끄고 실행 (속도 향상, OCR 검증이 필요 없을 때)",
+    )
     args = parser.parse_args()
-    run(args.video, speed_limit=args.speed_limit)
+    run(
+        args.video,
+        meters_per_pixel=args.meters_per_pixel,
+        speed_limit=args.speed_limit,
+        enable_ocr=not args.no_ocr,
+    )
 

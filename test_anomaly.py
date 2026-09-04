@@ -40,12 +40,20 @@ def run_case(name, history, prev_speed, expected_flag, should_trigger, detector=
 def main():
     results = []
 
-    # 1. 과속: 매 프레임 40픽셀씩 이동 → 빠른 속도
-    fast_positions = [(i * 40, 100) for i in range(10)]
+    # 1. 과속: 매 프레임 18픽셀씩 이동 → 현실적인 과속 범위(60~150km/h 사이)
+    fast_positions = [(i * 18, 100) for i in range(10)]
     results.append(run_case(
         "과속 - 빠르게 이동하는 차량",
         make_history(fast_positions), prev_speed=0.0,
         expected_flag="과속", should_trigger=True,
+    ))
+
+    # 1-2. 비현실적 속도: 매 프레임 100픽셀씩 이동 → 250km/h대, 추적 오류로 간주되어 과속 아님
+    implausible_positions = [(i * 100, 100) for i in range(10)]
+    results.append(run_case(
+        "비현실적 속도 - 200km/h대 (추적 오류로 간주, 과속 오탐 없어야 함)",
+        make_history(implausible_positions), prev_speed=0.0,
+        expected_flag="과속", should_trigger=False,
     ))
 
     # 1-1. 정상 속도: 매 프레임 3픽셀씩만 이동 → 과속 아님

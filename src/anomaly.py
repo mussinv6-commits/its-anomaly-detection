@@ -11,8 +11,11 @@ from dataclasses import dataclass
 @dataclass
 class AnomalyConfig:
     speed_limit: float = 60.0          # km/h, 과속 기준
+    max_plausible_speed: float = 150.0  # km/h, 이보다 빠르면 실제 속도가 아니라 추적 오류(ID 스위칭 등)로 간주
     stop_seconds: float = 10.0          # 불법 정차 판단 기준(초)
-    sudden_decel_ratio: float = 0.6     # 급정거 판단: 속도가 이전 대비 이 비율 이상 감소
+    sudden_decel_ratio: float = 0.8     # 급정거 판단: 속도가 이전 대비 이 비율 이상 감소 (70%→80%로 재강화)
+    min_speed_for_decel: float = 25.0   # km/h, 이 속도 이상으로 달리던 차량만 급정거 판단 대상 (20→25로 상향)
+                                          # (저속 구간의 미세한 흔들림까지 "급정거"로 잡히는 걸 방지)
     congestion_ratio: float = 0.4       # 정체 판단: 평균 통과량 대비 이 비율 이하로 감소
 
 
@@ -70,10 +73,21 @@ class AnomalyDetector:
         return best_cos_sim < -0.3
 
     def is_speeding(self, speed_kmh: float) -> bool:
-        return speed_kmh > self.config.speed_limit
+        """
+        과속 기준(speed_limit)을 넘되, 물리적으로 말이 안 되는 속도(max_plausible_speed 초과)는
+        실제 과속이 아니라 추적 오류(ID 스위칭, bbox 튐)로 보고 제외한다.
+        예: 200km/h는 일반 도로에서 나올 수 없는 값 — 십중팔구 계산 오류.
+        """
+        return self.config.speed_limit < speed_kmh <= self.config.max_plausible_speed
 
     def is_sudden_deceleration(self, prev_speed: float, curr_speed: float) -> bool:
-        if prev_speed <= 0:
+        """
+        원래 어느 정도 속도(min_speed_for_decel 이상)로 달리던 차량이
+        급격히(sudden_decel_ratio 이상) 느려질 때만 급정거로 판단한다.
+        저속 구간(예: 5km/h → 2km/h)의 미세한 흔들림은 비율로는 60% 감소처럼 보여도
+        실제로는 위험한 급정거가 아니므로 최소 속도 기준으로 걸러낸다.
+        """
+        if prev_speed < self.config.min_speed_for_decel:
             return False
         return (prev_speed - curr_speed) / prev_speed >= self.config.sudden_decel_ratio
 

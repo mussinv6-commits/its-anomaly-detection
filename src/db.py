@@ -249,7 +249,7 @@ def get_video_summary(source: str) -> dict:
         session.close()
         return {
             "source": source, "vehicle_count": 0, "avg_speed_kmh": 0.0,
-            "anomaly_counts": {}, "total_anomalies": 0,
+            "anomaly_counts": {}, "anomaly_vehicle_counts": {}, "total_anomalies": 0,
         }
 
     anomalies = (
@@ -266,26 +266,37 @@ def get_video_summary(source: str) -> dict:
 
     avg_speed = sum(f.speed_kmh for f in flows) / len(flows) if flows else 0.0
 
+    # anomaly_counts: 유형별 "이벤트 건수" (한 차량이 여러 프레임에서 반복 감지되면 다 더해짐)
+    # anomaly_vehicle_counts: 유형별 "고유 차량 수" (같은 차량은 한 번만 카운트) — 실제 대수 파악용
     anomaly_counts = {}
+    anomaly_vehicles = {}  # flag -> set(track_id)
     for a in anomalies:
         for flag in a.flags.split(","):
             anomaly_counts[flag] = anomaly_counts.get(flag, 0) + 1
+            anomaly_vehicles.setdefault(flag, set()).add(a.track_id)
+    anomaly_vehicle_counts = {flag: len(ids) for flag, ids in anomaly_vehicles.items()}
 
     return {
         "source": source,
         "vehicle_count": vehicle_count,
         "avg_speed_kmh": round(avg_speed, 1),
         "anomaly_counts": anomaly_counts,
+        "anomaly_vehicle_counts": anomaly_vehicle_counts,
         "total_anomalies": len(anomalies),
     }
 
 
 def get_all_video_sources() -> list:
-    """지금까지 처리된 모든 영상/이미지 소스 목록(중복 제거)을 반환한다."""
+    """
+    지금까지 처리된 소스 중 영상(.mp4/.avi/.mov) 파일만 반환한다 (이미지 소스는 제외).
+    populate_db.py로 처리한 정지 이미지들도 Track.source에 같이 쌓이는데,
+    batch_compare.py는 "영상끼리" 비교하는 용도라 이미지는 노이즈가 된다.
+    """
     session = SessionLocal()
     rows = session.query(Track.source).distinct().all()
     session.close()
-    return [r[0] for r in rows]
+    video_exts = (".mp4", ".avi", ".mov", ".mkv")
+    return [r[0] for r in rows if r[0] and r[0].lower().endswith(video_exts)]
 
 
 def save_ocr_attempt(raw_text: str, parsed_plate: str, track_id: int = None):
