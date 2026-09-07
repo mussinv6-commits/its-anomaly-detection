@@ -11,3 +11,4 @@ data/*.db
 !models/.gitkeep
 *.pt 
 auth-db-blueprint.png 
+"*.mp4" 
