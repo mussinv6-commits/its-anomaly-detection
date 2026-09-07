@@ -25,7 +25,7 @@ from db import (
     init_db, get_recent_anomalies, get_recent_detections, get_ocr_stats,
     get_recent_ocr_attempts, create_track, save_anomaly, get_anomaly_type_stats,
     save_speed_prediction, get_prediction_stats, get_recent_predictions,
-    get_cctv_locations,
+    get_cctv_locations, get_recent_ocr_successes,
 )
 
 app = FastAPI(title="ITS 이상탐지 API")
@@ -205,6 +205,21 @@ def ocr_attempts(limit: int = 20):
             "raw_text": r.raw_text,
             "parsed_plate": r.parsed_plate,
             "success": r.success,
+            "attempted_at": r.attempted_at.isoformat(),
+        }
+        for r in records
+    ]
+
+
+@app.get("/ocr-successes")
+def ocr_successes(limit: int = 20):
+    """성공한 번호판 인식만 모아서 반환한다. (실패가 압도적으로 많을 때도 성공 사례가 항상 보이도록)"""
+    records = get_recent_ocr_successes(limit)
+    return [
+        {
+            "id": r.id,
+            "raw_text": r.raw_text,
+            "parsed_plate": r.parsed_plate,
             "attempted_at": r.attempted_at.isoformat(),
         }
         for r in records

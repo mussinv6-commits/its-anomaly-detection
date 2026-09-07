@@ -382,6 +382,24 @@ def get_recent_ocr_attempts(limit: int = 50):
     return records
 
 
+def get_recent_ocr_successes(limit: int = 20):
+    """
+    성공한 번호판 인식 시도만 최신순으로 가져온다.
+    실패 건수가 압도적으로 많을 때, "최근 N건" 조회로는 성공 사례가
+    전혀 안 보이는 문제를 해결하기 위해 성공만 따로 조회하는 함수를 둔다.
+    """
+    session = SessionLocal()
+    records = (
+        session.query(OcrAttempt)
+        .filter(OcrAttempt.success == "success")
+        .order_by(OcrAttempt.attempted_at.desc())
+        .limit(limit)
+        .all()
+    )
+    session.close()
+    return records
+
+
 def get_anomaly_type_stats():
     """이상 유형(과속/역주행/급정거/불법정차)별 건수를 집계한다. (차트용)"""
     session = SessionLocal()
