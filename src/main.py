@@ -96,7 +96,7 @@ def calibrate_lane_directions(video_path: str, detector, sample_frames: int = 90
     return lane_directions
 
 
-def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60.0, enable_ocr: bool = True, save_ocr_debug_images: bool = False):
+def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60.0, enable_ocr: bool = True, save_ocr_debug_images: bool = False, latitude: float = None, longitude: float = None):
     debug_dir = os.path.join(PROJECT_ROOT, "debug_output")
     if save_ocr_debug_images:
         os.makedirs(debug_dir, exist_ok=True)
@@ -145,7 +145,7 @@ def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60
 
             # 이 차량을 처음 보는 경우, DB에 Track을 새로 생성
             if local_id not in local_to_db_track:
-                local_to_db_track[local_id] = create_track(source=video_path)
+                local_to_db_track[local_id] = create_track(source=video_path, latitude=latitude, longitude=longitude)
             db_track_id = local_to_db_track[local_id]
 
             prev_instant = prev_speeds.get(local_id, 0.0)
@@ -256,6 +256,8 @@ if __name__ == "__main__":
         help="OCR에 실제로 넘겨진 크롭 이미지를 파일로 저장 (ocr_debug_frame*.jpg) — "
              "번호판 인식이 계속 실패할 때 원인 파악용 (위치가 틀렸는지 화질 문제인지 확인)",
     )
+    parser.add_argument("--lat", type=float, default=None, help="이 영상(CCTV)이 촬영된 지점의 위도 (지도 표시용)")
+    parser.add_argument("--lng", type=float, default=None, help="이 영상(CCTV)이 촬영된 지점의 경도 (지도 표시용)")
     args = parser.parse_args()
     run(
         args.video,
@@ -263,5 +265,7 @@ if __name__ == "__main__":
         speed_limit=args.speed_limit,
         enable_ocr=not args.no_ocr,
         save_ocr_debug_images=args.save_ocr_debug,
+        latitude=args.lat,
+        longitude=args.lng,
     )
 

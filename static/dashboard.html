@@ -6,6 +6,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=14a84f7c944e699758e0898fb3ada0d4"></script>
 <style>
   :root {
     --bg: #14181c;
@@ -91,6 +92,11 @@
   .flag { color: var(--danger); font-weight: 700; }
   .ok { color: var(--normal); font-weight: 700; }
   .fail { color: var(--danger); font-weight: 700; }
+
+  #map-box { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; margin-bottom: 8px; }
+  #map { width: 100%; height: 420px; }
+  .map-legend { display: flex; gap: 18px; align-items: center; font-size: 12px; color: var(--text-muted); margin-bottom: 28px; }
+  .map-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
 </style>
 </head>
 <body>
@@ -105,6 +111,15 @@
       <div class="hero-title" id="hero-title">감시 중...</div>
       <div class="hero-sub" id="hero-sub">최초 데이터 수신 대기</div>
     </div>
+  </div>
+
+  <h2>CCTV 관제 지도</h2>
+  <div id="map-box">
+    <div id="map"></div>
+  </div>
+  <div class="map-legend">
+    <span><span class="dot" style="background:#2e9e5b;"></span>정상</span>
+    <span><span class="dot" style="background:#d93a3a;"></span>이상탐지 발생 지점</span>
   </div>
 
   <div class="btn-row">
@@ -175,6 +190,61 @@
 
     let charts = { cls: null, anomaly: null, ocr: null, prediction: null };
     let latestAnomaly = null;
+    let kakaoMap = null;
+    let mapMarkers = [];
+
+    function initMap() {
+      const container = document.getElementById('map');
+      // 기본 중심: 대한민국 중앙 근처 (등록된 CCTV가 없을 때의 기본 화면)
+      const options = { center: new kakao.maps.LatLng(36.5, 127.8), level: 12 };
+      kakaoMap = new kakao.maps.Map(container, options);
+    }
+
+    async function loadCctvLocations() {
+      if (!kakaoMap) return;
+      const res = await fetch('/cctv-locations');
+      const data = await res.json();
+
+      // 기존 마커 정리 후 다시 그림 (중복 방지)
+      mapMarkers.forEach(m => m.marker.setMap(null));
+      mapMarkers = [];
+
+      if (data.length === 0) {
+        console.log('CCTV 위치 데이터가 아직 없습니다. main.py --lat --lng 옵션으로 영상을 처리해주세요.');
+        return;
+      }
+
+      const bounds = new kakao.maps.LatLngBounds();
+      data.forEach(loc => {
+        const position = new kakao.maps.LatLng(loc.latitude, loc.longitude);
+        const isDanger = loc.anomaly_count > 0;
+
+        // 이상탐지 발생 여부에 따라 마커 색을 다르게 (신호등 색 체계와 동일한 언어)
+        const markerColor = isDanger ? '#d93a3a' : '#2e9e5b';
+        const svgMarker = `
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28">
+            <circle cx="14" cy="14" r="10" fill="${markerColor}" stroke="#14181c" stroke-width="2"/>
+          </svg>`;
+        const imageSrc = 'data:image/svg+xml;base64,' + btoa(svgMarker);
+        const imageSize = new kakao.maps.Size(28, 28);
+        const markerImage = new kakao.maps.MarkerImage(imageSrc, imageSize);
+
+        const marker = new kakao.maps.Marker({ position, image: markerImage, map: kakaoMap });
+
+        const infoContent = `<div style="padding:8px 10px;font-size:12px;color:#222;min-width:140px;">
+          <strong>${loc.source}</strong><br>
+          차량 ${loc.vehicle_count}대 · 이상탐지 ${loc.anomaly_count}건
+        </div>`;
+        const infowindow = new kakao.maps.InfoWindow({ content: infoContent });
+        kakao.maps.event.addListener(marker, 'mouseover', () => infowindow.open(kakaoMap, marker));
+        kakao.maps.event.addListener(marker, 'mouseout', () => infowindow.close());
+
+        mapMarkers.push({ marker, infowindow });
+        bounds.extend(position);
+      });
+
+      kakaoMap.setBounds(bounds);
+    }
 
     function formatTime(isoString) {
       const d = new Date(isoString);
@@ -366,6 +436,7 @@
       loadOcrAttempts();
       loadPredictions();
       loadDetections();
+      loadCctvLocations();
 
       const now = new Date();
       const pad = (n) => String(n).padStart(2, '0');
@@ -379,6 +450,37 @@
 
     loadAll();
     setInterval(loadAll, 5000);
+
+    // 지도는 카카오 SDK 로딩 완료 후 초기화해야 함
+    // 로딩 실패 시에도 화면에서 바로 원인을 알 수 있도록, 성공/실패를 지도 영역에 직접 표시한다
+    // SDK 스크립트 자체는 받아졌어도 window.kakao가 아직 안 만들어졌을 수 있어(타이밍),
+    // 바로 실패로 단정하지 않고 잠깐 재시도해본다.
+    (function setupMap(retriesLeft) {
+      if (typeof kakao !== 'undefined' && kakao.maps) {
+        try {
+          kakao.maps.load(() => {
+            initMap();
+            loadCctvLocations();
+          });
+        } catch (e) {
+          document.getElementById('map').innerHTML =
+            '<div style="color:#d93a3a;padding:20px;font-size:13px;">지도 초기화 오류: ' + e.message + '</div>';
+        }
+        return;
+      }
+
+      if (retriesLeft > 0) {
+        setTimeout(() => setupMap(retriesLeft - 1), 300);
+        return;
+      }
+
+      document.getElementById('map').innerHTML =
+        '<div style="color:#d93a3a;padding:20px;font-size:13px;">'
+        + '카카오맵 SDK 로딩 실패 — 앱키 오류이거나 네트워크 차단일 수 있습니다.<br>'
+        + '진단정보: typeof kakao = ' + typeof kakao
+        + (typeof kakao !== 'undefined' ? (', kakao.maps 존재 = ' + !!kakao.maps) : '')
+        + '</div>';
+    })(10); // 300ms씩 최대 10번(3초) 재시도
 
     document.querySelector('#demo-btn').addEventListener('click', async () => {
       const resultSpan = document.querySelector('#demo-result');

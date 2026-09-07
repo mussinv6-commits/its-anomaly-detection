@@ -25,6 +25,7 @@ from db import (
     init_db, get_recent_anomalies, get_recent_detections, get_ocr_stats,
     get_recent_ocr_attempts, create_track, save_anomaly, get_anomaly_type_stats,
     save_speed_prediction, get_prediction_stats, get_recent_predictions,
+    get_cctv_locations,
 )
 
 app = FastAPI(title="ITS 이상탐지 API")
@@ -213,6 +214,12 @@ def ocr_attempts(limit: int = 20):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/cctv-locations")
+def cctv_locations():
+    """위치 정보가 등록된 CCTV 지점들과 각 지점의 통계를 반환한다. (카카오맵 마커 표시용)"""
+    return get_cctv_locations()
 
 
 # 실행: uvicorn src.api:app --reload --port 8000

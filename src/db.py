@@ -35,6 +35,8 @@ class Track(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     source = Column(String, nullable=False)     # 영상/카메라 소스 식별자
     started_at = Column(DateTime, default=datetime.now)
+    latitude = Column(Float, nullable=True)     # CCTV 촬영 지점 위도 (지도 표시용)
+    longitude = Column(Float, nullable=True)    # CCTV 촬영 지점 경도 (지도 표시용)
 
     detections = relationship("DetectionRecord", back_populates="track", cascade="all, delete-orphan")
     flow_features = relationship("FlowFeature", back_populates="track", cascade="all, delete-orphan")
@@ -139,17 +141,61 @@ def get_or_create_track(source: str) -> int:
     return track_id
 
 
-def create_track(source: str) -> int:
+def create_track(source: str, latitude: float = None, longitude: float = None) -> int:
     """항상 새 Track 행을 만들고 id를 반환한다.
     영상(main.py) 처리처럼 같은 소스 안에 차량마다 별도 트랙이 필요한 경우에 쓴다."""
     session = SessionLocal()
-    track = Track(source=source)
+    track = Track(source=source, latitude=latitude, longitude=longitude)
     session.add(track)
     session.commit()
     session.refresh(track)
     track_id = track.id
     session.close()
     return track_id
+
+
+def get_cctv_locations():
+    """
+    위치 정보가 있는 CCTV(Track) 지점들을 반환한다. (지도 표시용)
+    같은 source(영상)는 하나로 묶어서, 그 지점에서 감지된 이상탐지 건수도 같이 집계한다.
+    """
+    session = SessionLocal()
+    tracks = (
+        session.query(Track)
+        .filter(Track.latitude.isnot(None), Track.longitude.isnot(None))
+        .all()
+    )
+    session.close()
+
+    locations = {}
+    for t in tracks:
+        key = (t.source, t.latitude, t.longitude)
+        if key not in locations:
+            locations[key] = {
+                "source": t.source,
+                "latitude": t.latitude,
+                "longitude": t.longitude,
+                "track_ids": [],
+            }
+        locations[key]["track_ids"].append(t.id)
+
+    result = []
+    for loc in locations.values():
+        session = SessionLocal()
+        anomaly_count = (
+            session.query(AnomalyRecord)
+            .filter(AnomalyRecord.track_id.in_(loc["track_ids"]))
+            .count()
+        )
+        session.close()
+        result.append({
+            "source": loc["source"],
+            "latitude": loc["latitude"],
+            "longitude": loc["longitude"],
+            "vehicle_count": len(loc["track_ids"]),
+            "anomaly_count": anomaly_count,
+        })
+    return result
 
 
 def save_anomaly(track_id: int, flags: list, speed_kmh: float, plate_number: str = None):
