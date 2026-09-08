@@ -25,7 +25,8 @@ from db import (
     init_db, get_recent_anomalies, get_recent_detections, get_ocr_stats,
     get_recent_ocr_attempts, create_track, save_anomaly, get_anomaly_type_stats,
     save_speed_prediction, get_prediction_stats, get_recent_predictions,
-    get_cctv_locations, get_recent_ocr_successes,
+    get_cctv_locations, get_recent_ocr_successes, get_anomaly_heatmap_data,
+    get_peak_hours_by_location,
 )
 
 app = FastAPI(title="ITS 이상탐지 API")
@@ -235,6 +236,21 @@ def health():
 def cctv_locations():
     """위치 정보가 등록된 CCTV 지점들과 각 지점의 통계를 반환한다. (카카오맵 마커 표시용)"""
     return get_cctv_locations()
+
+
+@app.get("/anomaly-heatmap")
+def anomaly_heatmap(hour: int = None):
+    """
+    CCTV 위치 x 시간대별 이상탐지 건수를 반환한다. (시공간 히트맵용)
+    hour(0~23)를 지정하면 그 시간대만, 안 주면 전체 시간대를 반환한다.
+    """
+    return get_anomaly_heatmap_data(hour)
+
+
+@app.get("/anomaly-peak-hours")
+def anomaly_peak_hours():
+    """CCTV 위치별 이상탐지 피크 시간대를 반환한다. (정책 도구용 — 어디를 언제 집중 관리해야 하는지)"""
+    return get_peak_hours_by_location()
 
 
 # 실행: uvicorn src.api:app --reload --port 8000

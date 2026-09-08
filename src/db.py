@@ -9,7 +9,7 @@
 
 import os
 from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, func
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship, joinedload
 
 DB_USER = os.environ.get("ITS_DB_USER", "postgres")
@@ -198,6 +198,55 @@ def get_cctv_locations():
     return result
 
 
+def get_anomaly_heatmap_data(hour: int = None):
+    """
+    CCTV 위치 x 시간대(0~23시)별 이상탐지 건수를 집계한다. (공간x시간 히트맵용)
+    hour를 지정하면 그 시간대만, 안 주면 전체 시간대를 다 반환한다.
+    """
+    session = SessionLocal()
+    hour_col = func.extract("hour", AnomalyRecord.detected_at).label("hour")
+    query = (
+        session.query(
+            Track.source,
+            Track.latitude,
+            Track.longitude,
+            hour_col,
+            func.count(AnomalyRecord.id).label("cnt"),
+        )
+        .join(AnomalyRecord, AnomalyRecord.track_id == Track.id)
+        .filter(Track.latitude.isnot(None), Track.longitude.isnot(None))
+        .group_by(Track.source, Track.latitude, Track.longitude, hour_col)
+    )
+    if hour is not None:
+        query = query.filter(hour_col == hour)
+    rows = query.all()
+    session.close()
+
+    return [
+        {"source": r[0], "latitude": r[1], "longitude": r[2], "hour": int(r[3]), "count": r[4]}
+        for r in rows
+    ]
+
+
+def get_peak_hours_by_location():
+    """CCTV 위치별로 이상탐지가 가장 많이 몰리는 시간대(피크 타임)를 계산한다."""
+    all_data = get_anomaly_heatmap_data()
+    by_location = {}
+    for row in all_data:
+        key = (row["source"], row["latitude"], row["longitude"])
+        by_location.setdefault(key, []).append(row)
+
+    result = []
+    for (source, lat, lng), rows in by_location.items():
+        peak = max(rows, key=lambda r: r["count"])
+        total = sum(r["count"] for r in rows)
+        result.append({
+            "source": source, "latitude": lat, "longitude": lng,
+            "peak_hour": peak["hour"], "peak_count": peak["count"], "total_count": total,
+        })
+    return result
+
+
 def save_anomaly(track_id: int, flags: list, speed_kmh: float, plate_number: str = None):
     session = SessionLocal()
     record = AnomalyRecord(
@@ -296,6 +345,7 @@ def get_video_summary(source: str) -> dict:
         return {
             "source": source, "vehicle_count": 0, "avg_speed_kmh": 0.0,
             "anomaly_counts": {}, "anomaly_vehicle_counts": {}, "total_anomalies": 0,
+            "ocr_total": 0, "ocr_success": 0, "ocr_success_rate": 0.0,
         }
 
     anomalies = (
@@ -308,9 +358,19 @@ def get_video_summary(source: str) -> dict:
         .filter(FlowFeature.track_id.in_(track_ids))
         .all()
     )
+    ocr_attempts = (
+        session.query(OcrAttempt)
+        .filter(OcrAttempt.track_id.in_(track_ids))
+        .all()
+    )
     session.close()
 
     avg_speed = sum(f.speed_kmh for f in flows) / len(flows) if flows else 0.0
+
+    # 이 영상만의 번호판 인식률 (다른 영상과 섞이지 않은 순수 통계)
+    ocr_total = len(ocr_attempts)
+    ocr_success = sum(1 for a in ocr_attempts if a.success == "success")
+    ocr_success_rate = round(ocr_success / ocr_total * 100, 1) if ocr_total > 0 else 0.0
 
     # anomaly_counts: 유형별 "이벤트 건수" (한 차량이 여러 프레임에서 반복 감지되면 다 더해짐)
     # anomaly_vehicle_counts: 유형별 "고유 차량 수" (같은 차량은 한 번만 카운트) — 실제 대수 파악용
@@ -329,6 +389,9 @@ def get_video_summary(source: str) -> dict:
         "anomaly_counts": anomaly_counts,
         "anomaly_vehicle_counts": anomaly_vehicle_counts,
         "total_anomalies": len(anomalies),
+        "ocr_total": ocr_total,
+        "ocr_success": ocr_success,
+        "ocr_success_rate": ocr_success_rate,
     }
 
 

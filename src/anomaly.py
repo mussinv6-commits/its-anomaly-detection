@@ -29,11 +29,16 @@ class AnomalyDetector:
         else:
             self.lane_directions = list(lane_directions)
 
-    def compute_velocity(self, history: list, fps: float, meters_per_pixel: float, window: int = 5):
+    def compute_velocity(self, history: list, fps: float, meters_per_pixel: float, window: int = 5, calibrator=None):
         """
         history의 최근 여러 프레임(window)을 평균 내서 속도(km/h)와 이동 벡터를 계산한다.
         딱 2프레임만 보면 검출 박스가 살짝만 흔들려도 속도가 크게 튀기 때문에
         (예: 한 프레임에 76km/h, 다음 프레임에 140km/h) 여러 프레임을 평균해서 노이즈를 줄인다.
+
+        calibrator(PerspectiveCalibrator)가 주어지면, meters_per_pixel(화면 전체에 동일 적용되는
+        스칼라 값) 대신 원근법이 보정된 정확한 실제 거리를 사용한다. 카메라에서 멀리 있는 차선의
+        속도가 비현실적으로 높게 계산되는 문제(같은 픽셀 이동량이라도 먼 차선은 실제로 더 먼 거리)를
+        해결하기 위함이다.
         """
         if len(history) < 2:
             return 0.0, (0.0, 0.0)
@@ -44,8 +49,14 @@ class AnomalyDetector:
         c2 = ((p_end[0] + p_end[2]) / 2, (p_end[1] + p_end[3]) / 2)
 
         dx, dy = (c2[0] - c1[0]) / n, (c2[1] - c1[1]) / n  # 프레임당 평균 이동량
-        dist_px = (dx ** 2 + dy ** 2) ** 0.5
-        dist_m = dist_px * meters_per_pixel
+
+        if calibrator is not None:
+            # 원근보정: 시작/끝 지점을 각각 실제 지면 좌표로 변환한 뒤 그 사이 거리를 계산
+            dist_m = calibrator.distance_meters(c1, c2) / n
+        else:
+            dist_px = (dx ** 2 + dy ** 2) ** 0.5
+            dist_m = dist_px * meters_per_pixel
+
         dt = 1 / fps
         speed_kmh = (dist_m / dt) * 3.6 if dt > 0 else 0.0
 
@@ -102,7 +113,7 @@ class AnomalyDetector:
         movement = max(xs) - min(xs) + max(ys) - min(ys)
         return movement < threshold_px
 
-    def evaluate(self, track: dict, fps: float, meters_per_pixel: float, prev_instant_speed: float = 0.0):
+    def evaluate(self, track: dict, fps: float, meters_per_pixel: float, prev_instant_speed: float = 0.0, calibrator=None):
         """
         트랙 하나를 받아 이상탐지 결과 dict를 반환한다.
 
@@ -110,9 +121,11 @@ class AnomalyDetector:
         - speed_kmh (스무딩): 여러 프레임 평균 — 리포팅, 과속·역주행 판단용 (노이즈에 안정적)
         - instant_speed_kmh (순간): 마지막 2프레임만 — 급정거 판단용
           (급정거는 "방금 급격히 느려졌는가"가 핵심이라, 평균을 쓰면 오히려 둔감해짐)
+
+        calibrator가 주어지면 meters_per_pixel 대신 원근보정된 정확한 거리를 사용한다.
         """
-        speed, vector = self.compute_velocity(track["history"], fps, meters_per_pixel, window=5)
-        instant_speed, _ = self.compute_velocity(track["history"], fps, meters_per_pixel, window=1)
+        speed, vector = self.compute_velocity(track["history"], fps, meters_per_pixel, window=5, calibrator=calibrator)
+        instant_speed, _ = self.compute_velocity(track["history"], fps, meters_per_pixel, window=1, calibrator=calibrator)
         flags = []
 
         if self.is_speeding(speed):

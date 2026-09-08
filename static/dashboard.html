@@ -97,6 +97,11 @@
   #map { width: 100%; height: 420px; }
   .map-legend { display: flex; gap: 18px; align-items: center; font-size: 12px; color: var(--text-muted); margin-bottom: 28px; }
   .map-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+  .heatmap-controls { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .heatmap-hour-label { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+  #hour-slider { flex: 1; max-width: 420px; accent-color: var(--accent); }
+  #hour-value { min-width: 40px; color: var(--accent); font-weight: 700; }
+  .heatmap-hint { font-size: 12px; color: var(--text-muted); margin: 0 0 20px; }
 </style>
 </head>
 <body>
@@ -121,6 +126,22 @@
     <span><span class="dot" style="background:#2e9e5b;"></span>정상</span>
     <span><span class="dot" style="background:#d93a3a;"></span>이상탐지 발생 지점</span>
   </div>
+
+  <h2>시간대별 위험 히트맵</h2>
+  <div class="heatmap-controls">
+    <span class="heatmap-hour-label">전체 시간대</span>
+    <input type="range" id="hour-slider" min="-1" max="23" value="-1" step="1">
+    <span id="hour-value" class="mono">전체</span>
+  </div>
+  <p class="heatmap-hint">슬라이더를 움직이면 지도 위 원의 크기가 그 시간대의 이상탐지 밀집도로 바뀝니다 (-1=전체 시간대 합산)</p>
+
+  <h2>지점별 피크 시간대 (정책 참고용)</h2>
+  <table id="peak-hour-table">
+    <thead>
+      <tr><th>CCTV 지점</th><th>피크 시간대</th><th>피크 시간 건수</th><th>전체 건수</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
 
   <div class="btn-row">
     <button id="demo-btn">+ 테스트 이상탐지 1건 추가 (POST)</button>
@@ -200,6 +221,8 @@
     let latestAnomaly = null;
     let kakaoMap = null;
     let mapMarkers = [];
+    let heatCircles = [];  // 시간대별 히트서클 (kakao.maps.Circle 목록)
+    let selectedHour = -1; // -1 = 전체 시간대 합산
 
     function initMap() {
       const container = document.getElementById('map');
@@ -252,6 +275,71 @@
       });
 
       kakaoMap.setBounds(bounds);
+    }
+
+    async function loadHeatmap(hour) {
+      if (!kakaoMap) return;
+      const url = hour === -1 ? '/anomaly-heatmap' : `/anomaly-heatmap?hour=${hour}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      // 기존 히트서클 정리
+      heatCircles.forEach(c => c.setMap(null));
+      heatCircles = [];
+
+      // -1(전체)이면 같은 위치의 여러 시간대 건수를 합산해서 하나의 원으로 표시
+      const merged = {};
+      data.forEach(row => {
+        const key = `${row.latitude},${row.longitude}`;
+        merged[key] = merged[key] || { latitude: row.latitude, longitude: row.longitude, count: 0 };
+        merged[key].count += row.count;
+      });
+
+      const counts = Object.values(merged).map(v => v.count);
+      const maxCount = counts.length > 0 ? Math.max(...counts) : 1;
+
+      Object.values(merged).forEach(loc => {
+        // 건수가 많을수록 원이 크고 진하게 — 위험도를 한눈에 비교 가능
+        const ratio = loc.count / maxCount;
+        const radius = 40 + ratio * 260;      // 40m ~ 300m
+        const opacity = 0.15 + ratio * 0.45;  // 옅음 ~ 진함
+
+        const circle = new kakao.maps.Circle({
+          center: new kakao.maps.LatLng(loc.latitude, loc.longitude),
+          radius,
+          strokeWeight: 1,
+          strokeColor: '#d93a3a',
+          strokeOpacity: 0.5,
+          fillColor: '#d93a3a',
+          fillOpacity: opacity,
+        });
+        circle.setMap(kakaoMap);
+        heatCircles.push(circle);
+      });
+    }
+
+    async function loadPeakHours() {
+      const res = await fetch('/anomaly-peak-hours');
+      const data = await res.json();
+      const tbody = document.querySelector('#peak-hour-table tbody');
+      tbody.innerHTML = '';
+      if (data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted)">아직 데이터가 없습니다</td></tr>';
+        return;
+      }
+      // 위험도(전체 건수) 높은 순으로 정렬해서, 어디부터 봐야 할지 바로 보이게 함
+      data.sort((a, b) => b.total_count - a.total_count);
+      data.forEach(r => {
+        const row = document.createElement('tr');
+        const sourceLabel = r.source.split(/[\\/]/).pop(); // 경로 대신 파일명만 표시
+        row.innerHTML = `
+          <td>${sourceLabel}</td>
+          <td class="mono fail">${String(r.peak_hour).padStart(2, '0')}시</td>
+          <td class="mono">${r.peak_count}건</td>
+          <td class="mono">${r.total_count}건</td>
+        `;
+        tbody.appendChild(row);
+      });
     }
 
     function formatTime(isoString) {
@@ -466,6 +554,8 @@
       loadPredictions();
       loadDetections();
       loadCctvLocations();
+      loadHeatmap(selectedHour);
+      loadPeakHours();
 
       const now = new Date();
       const pad = (n) => String(n).padStart(2, '0');
@@ -510,6 +600,13 @@
         + (typeof kakao !== 'undefined' ? (', kakao.maps 존재 = ' + !!kakao.maps) : '')
         + '</div>';
     })(10); // 300ms씩 최대 10번(3초) 재시도
+
+    document.querySelector('#hour-slider').addEventListener('input', (e) => {
+      selectedHour = parseInt(e.target.value, 10);
+      const label = document.querySelector('#hour-value');
+      label.textContent = selectedHour === -1 ? '전체' : `${String(selectedHour).padStart(2, '0')}시`;
+      loadHeatmap(selectedHour);
+    });
 
     document.querySelector('#demo-btn').addEventListener('click', async () => {
       const resultSpan = document.querySelector('#demo-result');

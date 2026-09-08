@@ -96,7 +96,7 @@ def calibrate_lane_directions(video_path: str, detector, sample_frames: int = 90
     return lane_directions
 
 
-def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60.0, enable_ocr: bool = True, save_ocr_debug_images: bool = False, latitude: float = None, longitude: float = None):
+def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60.0, enable_ocr: bool = True, save_ocr_debug_images: bool = False, latitude: float = None, longitude: float = None, homography_path: str = None):
     debug_dir = os.path.join(PROJECT_ROOT, "debug_output")
     if save_ocr_debug_images:
         os.makedirs(debug_dir, exist_ok=True)
@@ -104,6 +104,22 @@ def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60
     detector = VehicleDetector()
     tracker = SimpleTracker()
     ocr = PlateOCR() if enable_ocr else None
+
+    # 원근보정이 있으면 카메라 거리에 따라 정확한 실제 거리를 계산,
+    # 없으면 기존처럼 meters_per_pixel 하나로 화면 전체를 근사 계산.
+    # 파일 확장자로 방식을 자동 판별: .npy는 호모그래피(4점, 가로+세로 보정),
+    # 그 외(pickle)는 깊이보정(세로 위치만 보정, 가로 추측이 없어 더 안전함)
+    calibrator = None
+    if homography_path:
+        if homography_path.endswith(".npy"):
+            from perspective import PerspectiveCalibrator
+            calibrator = PerspectiveCalibrator.load(homography_path)
+            print(f"원근보정(호모그래피) 사용: {homography_path}")
+        else:
+            import pickle
+            with open(homography_path, "rb") as f:
+                calibrator = pickle.load(f)
+            print(f"깊이보정(DepthScaleCalibrator) 사용: {homography_path}")
 
     # 번호판 전용 검출 모델이 학습되어 있으면 그걸 쓰고(정확), 없으면 기존 방식(하단 40% 추정)으로 대체
     plate_detector = None
@@ -132,6 +148,12 @@ def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60
     # (같은 차량이 여러 프레임에 걸쳐 나타나도 DB Track은 하나만 생성되도록)
     local_to_db_track = {}
 
+    # 트랙별로 인식된 번호판 후보들을 모아뒀다가, 나중에 다수결로 최종 번호판을 정한다.
+    # (한 프레임만 보고 판정하면 화질/각도가 안 좋은 순간에 걸려 실패할 수 있으므로,
+    #  이상탐지된 차량이 화면에 있는 동안 여러 프레임에 걸쳐 계속 시도해서 성공률을 높인다)
+    plate_votes = {}  # local_id -> {plate_number: count}
+    anomaly_records_pending = []  # (db_track_id, flags, speed_kmh, local_id) - 번호판 확정 전 임시 보관
+
     while True:
         ok, frame = cap.read()
         if not ok:
@@ -150,7 +172,7 @@ def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60
 
             prev_instant = prev_speeds.get(local_id, 0.0)
             result = anomaly_detector.evaluate(
-                track, fps, meters_per_pixel, prev_instant
+                track, fps, meters_per_pixel, prev_instant, calibrator=calibrator
             )
             prev_speeds[local_id] = result["instant_speed_kmh"]  # 급정거 판단은 순간속도 기준으로 이어감
             bbox = track["bbox"]
@@ -173,8 +195,9 @@ def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60
 
                 plate_number = None
                 if ocr is not None:
-                    # 이상탐지된 차량만 번호판 인식 시도 (전체 차량마다 시도하면 너무 느리고,
-                    # 실무적으로도 "단속 대상만 번호판 확인"이 현실적인 방식)
+                    # 이상탐지된 차량은 화면에 있는 동안 매 프레임 계속 시도한다 (다수결 방식).
+                    # 한 프레임만 보고 판정하면 그 순간 화질/각도가 안 좋을 때 실패하기 쉬우므로,
+                    # 여러 프레임의 인식 결과를 모아뒀다가 가장 많이 나온 값을 최종 채택한다.
                     x1, y1, x2, y2 = [int(v) for v in bbox]
                     x1, y1 = max(0, x1), max(0, y1)
                     vehicle_crop_full = frame[y1:y2, x1:x2]
@@ -182,20 +205,16 @@ def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60
                     ocr_target = None
                     if vehicle_crop_full.size > 0:
                         if save_ocr_debug_images:
-                            # 번호판 검출 자체가 실패해도, 원본 차량 crop은 항상 저장해서
-                            # "차량 crop이 제대로 잘렸는지"부터 눈으로 확인할 수 있게 함
                             debug_path = os.path.join(debug_dir, f"vehicle_frame{frame_idx}_track{local_id}.jpg")
                             cv2.imwrite(debug_path, vehicle_crop_full)
 
                         if plate_detector is not None:
-                            # 학습된 번호판 검출 모델로 정확한 위치를 찾아서 그 부분만 크롭
                             plate_box = plate_detector.detect(vehicle_crop_full)
                             if plate_box:
                                 ocr_target = plate_detector.crop_plate(vehicle_crop_full, plate_box)
                             elif save_ocr_debug_images:
                                 print(f"           └ 번호판 검출 실패 (모델이 위치를 못 찾음) — 차량 crop만 저장됨")
                         else:
-                            # 모델이 없으면, 번호판이 보통 있는 차량 하단 40%로 추정해서 크롭
                             height = y2 - y1
                             plate_region_y1 = int(height * 0.6)
                             ocr_target = vehicle_crop_full[plate_region_y1:, :]
@@ -205,14 +224,18 @@ def run(video_path: str, meters_per_pixel: float = 0.05, speed_limit: float = 60
                             debug_path = os.path.join(debug_dir, f"plate_frame{frame_idx}_track{local_id}.jpg")
                             cv2.imwrite(debug_path, ocr_target)
                         debug = ocr.read_debug(ocr_target)
-                        plate_number = debug["parsed"]
+                        this_frame_plate = debug["parsed"]
                         save_ocr_attempt(
                             raw_text=debug["raw_text"],
-                            parsed_plate=plate_number,
+                            parsed_plate=this_frame_plate,
                             track_id=db_track_id,
                         )
-                        if plate_number:
-                            print(f"           └ 번호판 인식: {plate_number}")
+                        if this_frame_plate:
+                            votes = plate_votes.setdefault(local_id, {})
+                            votes[this_frame_plate] = votes.get(this_frame_plate, 0) + 1
+                            # 지금까지 이 트랙에서 가장 많이 나온 값을 임시로 채택 (다음 프레임에서 더 나은 값이 나오면 계속 갱신됨)
+                            plate_number = max(votes, key=votes.get)
+                            print(f"           └ 번호판 인식(투표 중): {this_frame_plate} (현재 최다득표: {plate_number})")
 
                 save_anomaly(
                     track_id=db_track_id,
@@ -258,6 +281,11 @@ if __name__ == "__main__":
     )
     parser.add_argument("--lat", type=float, default=None, help="이 영상(CCTV)이 촬영된 지점의 위도 (지도 표시용)")
     parser.add_argument("--lng", type=float, default=None, help="이 영상(CCTV)이 촬영된 지점의 경도 (지도 표시용)")
+    parser.add_argument(
+        "--homography", default=None,
+        help="calibrate_homography.py로 만든 호모그래피 파일 경로. "
+             "주어지면 meters_per_pixel 대신 원근보정된 정확한 속도를 계산함 (카메라 거리에 따른 오차 해결)",
+    )
     args = parser.parse_args()
     run(
         args.video,
@@ -267,5 +295,6 @@ if __name__ == "__main__":
         save_ocr_debug_images=args.save_ocr_debug,
         latitude=args.lat,
         longitude=args.lng,
+        homography_path=args.homography,
     )
 
