@@ -12,3 +12,4 @@ data/*.db
 *.pt 
 auth-db-blueprint.png 
 "*.mp4" 
+runs/ 
