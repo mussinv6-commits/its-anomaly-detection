@@ -1,5 +1,0 @@
-path: C:\Users\mbc\Desktop\its_project_scaffold\data\plate_yolo
-train: images/train
-val: images/val
-names:
-  0: plate
