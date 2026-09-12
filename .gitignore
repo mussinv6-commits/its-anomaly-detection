@@ -13,3 +13,5 @@ data/*.db
 auth-db-blueprint.png 
 "*.mp4" 
 runs/ 
+data/plate_yolo/ 
+data/aihub_raw/ 

@@ -59,6 +59,17 @@ def print_comparison_table(summaries: list):
             print(f"\n영상 간 평균속도 편차: 최소 {min(speeds):.1f}km/h ~ 최대 {max(speeds):.1f}km/h")
             print("(편차가 크면 카메라 각도/거리에 따라 meters_per_pixel 값을 영상별로 조정할 필요가 있음)")
 
+    print("\n[번호판 인식률 — 영상별로 따로 집계 (촬영 조건이 다르면 섞어서 보면 안 됨)]")
+    print("=" * 78)
+    print(f"{'영상':<28} {'시도':>6} {'성공':>6} {'성공률':>8}")
+    print("-" * 78)
+    for s in summaries:
+        name = Path(s["source"]).name
+        print(f"{name:<28} {s.get('ocr_total', 0):>6} {s.get('ocr_success', 0):>6} {s.get('ocr_success_rate', 0):>7.1f}%")
+    print("=" * 78)
+    print("(번호판이 안 보이는 조건의 영상과 섞어서 전체 평균을 내면 실제보다 낮게 나옴 —")
+    print(" 영상별로 따로 보고, 촬영 조건이 좋은 영상 기준으로 목표 성공률을 판단할 것)")
+
 
 def main():
     parser = argparse.ArgumentParser()
